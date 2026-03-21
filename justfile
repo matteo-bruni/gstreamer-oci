@@ -33,17 +33,27 @@ build GSTREAMER_BUILD_TYPE BASE_IMAGE BASE_TAG GSTREAMER_VERSION PYTHON_VERSION 
     TAG_SUFFIX=""
     if [ "${GSTREAMER_BUILD_TYPE}" != "release" ]; then TAG_SUFFIX="-${GSTREAMER_BUILD_TYPE}"; fi
 
-    # build the image with the latest dependencies
-    docker \
-        buildx debug --on=error --invoke=/bin/bash build \
-        --build-arg BASE_IMAGE=${BASE_IMAGE}:${BASE_TAG} \
-        --build-arg GSTREAMER_VERSION=${GSTREAMER_VERSION} \
-        --build-arg PYTHON_VERSION=${PYTHON_VERSION} \
-        --build-arg UV_VERSION=${UV_VERSION} \
-        --build-arg GSTREAMER_BUILD_TYPE=${GSTREAMER_BUILD_TYPE} \
-        --progress auto \
-        --tag gstreamer:gst-${GSTREAMER_VERSION}-${BASE_IMAGE}.${BASE_TAG}-py-${PYTHON_VERSION}${TAG_SUFFIX} \
+    TAG="gstreamer:gst-${GSTREAMER_VERSION}-${BASE_IMAGE}.${BASE_TAG}-py-${PYTHON_VERSION}${TAG_SUFFIX}"
+
+    BUILD_ARGS=(
+        --build-arg BASE_IMAGE=${BASE_IMAGE}:${BASE_TAG}
+        --build-arg GSTREAMER_VERSION=${GSTREAMER_VERSION}
+        --build-arg PYTHON_VERSION=${PYTHON_VERSION}
+        --build-arg UV_VERSION=${UV_VERSION}
+        --build-arg GSTREAMER_BUILD_TYPE=${GSTREAMER_BUILD_TYPE}
+        --progress auto
+        --tag "${TAG}"
         .
+    )
+
+    # use buildx debug if available, otherwise fall back to plain docker build
+    if docker buildx debug --help &>/dev/null; then
+        export BUILDX_EXPERIMENTAL=1
+        docker buildx debug --on=error --invoke=/bin/bash build "${BUILD_ARGS[@]}"
+    else
+        echo "Note: buildx debug not available, using plain docker build"
+        docker build "${BUILD_ARGS[@]}"
+    fi
 
 build-debug BASE_IMAGE="ubuntu" BASE_TAG="24.04" GSTREAMER_VERSION="1.28.1" PYTHON_VERSION="3.12" UV_VERSION="latest": (build "debug" BASE_IMAGE BASE_TAG GSTREAMER_VERSION PYTHON_VERSION UV_VERSION)
 
