@@ -112,7 +112,7 @@ RUN mkdir -p ${GSTREAMER_PATH} && \
     rm -f /root/.cache/gstreamer-1.0/registry.x86_64.bin 
 
 # create a python package for easier redistribution of the gstreamer python overrides
-# the package will be called sp_gst_overrides to avoid name clash with gst-python
+# the package will be called gst-python-binding to avoid name clash with gst-python
 RUN --mount=type=bind,src=build-utils,target=/tmp/build-utils \
     # we will build the package in a separate directory to avoid polluting the gstreamer source tree
     export GST_PYTHON_BINDING_BUILD_DIR=${GSTREAMER_PATH}/gst-python-binding/ && \
