@@ -18,11 +18,46 @@ just build-debug
 just build-release
 ```
 
-### Run example plugin
+### Run example plugins
 
+Once the build-debug is complete, you can enter the container with:
 ```
 just run-example
 ```
+
+once inside the container you should see the plugins doing:
+
+```
+gst-inspect-1.0 python
+```
+
+There are two plugins included in the `example_gst_plugin` directory:
+- `py-with-property`: simple plugin with a string property
+- `py-rgb-square-with-property`: plugin that draw a red square of a given size on top of the input buffer. (size can be set as a property). this plugin create its output buffer (doest not work `in-place`).
+
+to test the plugin is working:
+
+```
+gst-launch-1.0 \
+    videotestsrc \
+    ! py-with-property \
+    ! fakevideosink
+```
+
+```
+gst-launch-1.0 \
+    videotestsrc \
+    ! video/x-raw,format=RGB,width=320,height=240 \
+    ! py-rgb-square-with-property \
+    ! fakevideosink
+```
+
+by default videotestsrc will generate infinite output, to limit it to a certain number of frames, set num-buffers
+
+```  
+videotestsrc num-buffers=10
+```
+
 
 ### Default parameters
 

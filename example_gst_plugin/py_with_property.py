@@ -9,7 +9,7 @@ gi.require_version("GstBase", "1.0")
 from gi.repository import Gst, GstBase, GObject
 
 
-class GstPyWithProperty(GstBase.BaseTransform):
+class GstPyWithPropertyIP(GstBase.BaseTransform):
     GST_PLUGIN_NAME = "py-with-property"
     __gtype_name__ = GST_PLUGIN_NAME
 
@@ -71,4 +71,4 @@ class GstPyWithProperty(GstBase.BaseTransform):
         return True
 
 
-__gstelementfactory__ = (GstPyWithProperty.GST_PLUGIN_NAME, Gst.Rank.NONE, GstPyWithProperty)
+__gstelementfactory__ = (GstPyWithPropertyIP.GST_PLUGIN_NAME, Gst.Rank.NONE, GstPyWithPropertyIP)

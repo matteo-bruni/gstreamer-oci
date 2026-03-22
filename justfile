@@ -75,7 +75,7 @@ run-example BASE_IMAGE="ubuntu" BASE_TAG="24.04" GSTREAMER_VERSION="1.28.1" PYTH
     fi
 
     docker run --rm -it \
-        -v "$(pwd)/example_gst_plugin/example.py:/tmp/gst/python/example.py:ro" \
+        -v "$(pwd)/example_gst_plugin:/tmp/gst/python:ro" \
         -e GST_PLUGIN_PATH=/tmp/gst \
         "${IMAGE}" \
         bash
