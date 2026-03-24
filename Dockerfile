@@ -52,15 +52,21 @@ RUN apt-get update && \
         libgirepository1.0-dev libgirepository-2.0-dev \
         gir1.2-girepository-3.0-dev \
     && \      
-    apt-get clean
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
+# used to find the python toolchain install folder
+ENV UV_TOOLCHAIN_DIR=/opt/uv/toolchain-${PYTHON_VERSION}
 # install python version and install in VIRTUAL_ENV
 RUN uv python install ${PYTHON_VERSION} --default && \
-    uv venv ${VIRTUAL_ENV} && \
+    uv venv ${VIRTUAL_ENV} --python ${PYTHON_VERSION} && \
+    ln -s $(${VIRTUAL_ENV}/bin/python -c "import sys; print(sys.base_prefix)") /opt/uv/toolchain-${PYTHON_VERSION} && \
     # add the python library to the ldconfig path so that the gstreamer build can find it
-    echo "${UV_PYTHON_INSTALL_DIR}/cpython-${PYTHON_VERSION}-linux-x86_64-gnu/lib" > /etc/ld.so.conf.d/uv-python.conf && \
+    echo "${UV_TOOLCHAIN_DIR}/lib" > /etc/ld.so.conf.d/uv-python.conf && \
     ldconfig
 
+# let meson and other libs to find the uv python installation using its pkg-config file
+ENV PKG_CONFIG_PATH="${UV_TOOLCHAIN_DIR}/lib/pkgconfig"
 # will autodetect the python installed in the VENV and use it instead of the ubuntu provided one
 ENV PATH=${VIRTUAL_ENV}/bin:${PATH}
 
@@ -74,7 +80,9 @@ RUN uv pip install --no-cache \
     Jinja2 \
     Pygments  \
     typogrify \
-    setuptools
+    setuptools \
+    wheel \
+    typing-extensions
 
 # build gstreamer from source
 RUN mkdir -p ${GSTREAMER_PATH} && \
@@ -94,7 +102,8 @@ RUN mkdir -p ${GSTREAMER_PATH} && \
         apt-get update && \
         apt-get install -y --no-install-recommends \
             libglib2.0-0t64-dbgsym && \
-        apt-get clean; \
+        apt-get clean && \
+        rm -rf /var/lib/apt/lists/*; \
     fi && \
     meson setup build \
         --prefix=/usr \
@@ -116,12 +125,8 @@ RUN mkdir -p ${GSTREAMER_PATH} && \
 RUN --mount=type=bind,src=build-utils,target=/tmp/build-utils \
     # we will build the package in a separate directory to avoid polluting the gstreamer source tree
     export GST_PYTHON_BINDING_BUILD_DIR=${GSTREAMER_PATH}/gst-python-binding/ && \
-    # install build dependencies
-    uv pip install --no-cache \
-        wheel typing-extensions && \
     # create the directory structure for the package
     mkdir -p "${GST_PYTHON_BINDING_BUILD_DIR}/src/gi/overrides" && \
-    # move the pyproject.toml file and update the version to match the gstreamer version, this way we can publish the package on pypi if we want in the future
     cp \
         /tmp/build-utils/gst-python-binding/pyproject.toml \
         "${GST_PYTHON_BINDING_BUILD_DIR}/pyproject.toml" && \
@@ -134,7 +139,7 @@ RUN --mount=type=bind,src=build-utils,target=/tmp/build-utils \
     sed -i 's/version = ".*"/version = "'"${GST_WHEEL_VERSION}"'"/' "${GST_PYTHON_BINDING_BUILD_DIR}/pyproject.toml" && \
     # copy the compiled the .so files in the new package
     cp \
-        ${GSTREAMER_PATH}/build/subprojects/gst-python/gi/overrides/_gi_gst.*.so \
+        ${GSTREAMER_PATH}/build/subprojects/gst-python/gi/overrides/_gi_gst*.so \
         "${GST_PYTHON_BINDING_BUILD_DIR}/src/gi/overrides/" && \
     # copy the .py files in the new package
     cp \
