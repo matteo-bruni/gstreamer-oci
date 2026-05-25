@@ -4,7 +4,7 @@ ARG UV_VERSION=0.10.12
 # only way to get COPY from using a variable as the version is to use a multi stage build, we copy the uv binaries from the uv image to the final image
 FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv_source
 
-FROM ${BASE_IMAGE}
+FROM ${BASE_IMAGE} AS builder
 
 # install curl to handle custom python version
 COPY --from=uv_source /uv /uvx /bin/
@@ -27,8 +27,13 @@ ENV PYTHONUNBUFFERED=1
 
 # GSTREAMER OPTIONS
 ENV GSTREAMER_PATH=/opt/gstreamer
+ENV GSTREAMER_ENABLE_NON_FREE=false
 # where the wheel will be after compilation
 ENV PY_WHEEL_DIR=/opt/wheel
+
+# for debug symbols
+# see https://ubuntu.com/server/docs/how-to/debugging/about-debuginfod/
+ENV DEBUGINFOD_URLS="https://debuginfod.ubuntu.com"
 
 # UV OPTIONS
 ENV UV_COMPILE_BYTECODE=1
@@ -45,14 +50,21 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         build-essential ca-certificates \
         git curl wget \
-        # gstreamer dependencies
+        # gstreamer generic dependencies
         flex libunwind-dev libdw-dev libgmp-dev libglib2.0-dev \
         clang libclang-dev bison \
         # needed for gst-python
         libgirepository1.0-dev libgirepository-2.0-dev \
         gir1.2-girepository-3.0-dev \
-    && \      
-    apt-get clean
+        && \      
+    if [ "${GSTREAMER_ENABLE_NON_FREE}" = "true" ]; then \
+        apt-get install -y --no-install-recommends \
+            # drivers non-free dependencies
+            intel-media-va-driver-non-free  \
+            # encoders
+            x265 x264 libx265-dev libx264-dev \
+    fi && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # install python version and install in VIRTUAL_ENV
 RUN uv python install ${PYTHON_VERSION} --default && \
@@ -76,6 +88,13 @@ RUN uv pip install --no-cache \
     typogrify \
     setuptools
 
+# RUST & CARGO-C INSTALLATION 
+ENV PATH="/root/.cargo/bin:${PATH}"
+# needed to build the gst-plugins-rs
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal && \
+    cargo install cargo-c && \
+    rm -rf $HOME/.cargo/registry $HOME/.cargo/git
+
 # build gstreamer from source
 RUN mkdir -p ${GSTREAMER_PATH} && \
     git clone \
@@ -86,24 +105,37 @@ RUN mkdir -p ${GSTREAMER_PATH} && \
     if [ "${GSTREAMER_BUILD_TYPE}" = "release" ]; then \
         LTO_FLAG="-Db_lto=true"; \
     else \
-        # also install gdb and debug symbols in debug builds
-        apt-get update && \
-        apt-get install -y --no-install-recommends gdb ubuntu-dbgsym-keyring && \
-        echo "deb http://ddebs.ubuntu.com $(. /etc/os-release && echo $VERSION_CODENAME) main restricted universe multiverse" > /etc/apt/sources.list.d/ddebs.list && \
-        echo "deb http://ddebs.ubuntu.com $(. /etc/os-release && echo $VERSION_CODENAME)-updates main restricted universe multiverse" >> /etc/apt/sources.list.d/ddebs.list && \
         apt-get update && \
         apt-get install -y --no-install-recommends \
             libglib2.0-0t64-dbgsym && \
-        apt-get clean; \
+        apt-get clean && rm -rf /var/lib/apt/lists/*; \
     fi && \
+    NON_FREE="" && \
+    if [ "${GSTREAMER_ENABLE_NON_FREE}" = "true" ]; then \
+        NON_FREE="-Dnon-free=true"; \
+    else \
+        NON_FREE=""; \
+    fi && \
+    # configure with meson
     meson setup build \
         --prefix=/usr \
         --warnlevel=0 \
         --buildtype=${GSTREAMER_BUILD_TYPE} \
         ${LTO_FLAG} \
+        ${NON_FREE} \
         -Dpackage-origin=https://gitlab.freedesktop.org/gstreamer/gstreamer.git \
+        -Dgst-examples=disabled \
+        # python
         -Dpython=enabled \
         -Dintrospection=enabled \
+        # rust plugins (disable examples will cause error on 1.28.1 )
+        -Drs=enabled \
+        -Dgst-plugins-rs:gtk4=enabled \
+        -Dgst-plugins-rs:examples=disabled \
+        # build gtk 4
+        -Dgtk=enabled \
+        -Dgst-plugins-bad:vulkan=enabled \
+        -Dgst-plugins-bad:vulkan-video=enabled \
         2>&1 | tee ${GSTREAMER_PATH}/build.log && \
     # actual build
     ninja -C build 2>&1 | tee -a ${GSTREAMER_PATH}/build.log && \
