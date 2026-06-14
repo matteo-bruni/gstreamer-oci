@@ -7,6 +7,22 @@ default:
     just --list
 
 
+image-tag GSTREAMER_BUILD_TYPE BASE_IMAGE BASE_TAG GSTREAMER_VERSION PYTHON_VERSION:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    GSTREAMER_BUILD_TYPE={{ GSTREAMER_BUILD_TYPE }}
+    BASE_IMAGE={{ BASE_IMAGE }}
+    BASE_TAG={{ BASE_TAG }}
+    GSTREAMER_VERSION={{ GSTREAMER_VERSION }}
+    PYTHON_VERSION={{ PYTHON_VERSION }}
+
+    TAG_SUFFIX=""
+    if [ "${GSTREAMER_BUILD_TYPE}" != "release" ]; then TAG_SUFFIX="-${GSTREAMER_BUILD_TYPE}"; fi
+
+    echo "gstreamer:gst-${GSTREAMER_VERSION}-${BASE_IMAGE}.${BASE_TAG}-py-${PYTHON_VERSION}${TAG_SUFFIX}"
+
+
 # build image, will reopen last layer with shell on building failure
 build GSTREAMER_BUILD_TYPE BASE_IMAGE BASE_TAG GSTREAMER_VERSION PYTHON_VERSION UV_VERSION:
     #!/usr/bin/env bash
@@ -29,20 +45,17 @@ build GSTREAMER_BUILD_TYPE BASE_IMAGE BASE_TAG GSTREAMER_VERSION PYTHON_VERSION 
     echo " - PYTHON_VERSION=${PYTHON_VERSION}"
     echo " - UV_VERSION=${UV_VERSION}"
     echo " - GSTREAMER_BUILD_TYPE=${GSTREAMER_BUILD_TYPE}"
-    # tag suffix: only add -debug for debug builds
-    TAG_SUFFIX=""
-    if [ "${GSTREAMER_BUILD_TYPE}" != "release" ]; then TAG_SUFFIX="-${GSTREAMER_BUILD_TYPE}"; fi
-
-    TAG="gstreamer:gst-${GSTREAMER_VERSION}-${BASE_IMAGE}.${BASE_TAG}-py-${PYTHON_VERSION}${TAG_SUFFIX}"
+    TAG="$(just image-tag "${GSTREAMER_BUILD_TYPE}" "${BASE_IMAGE}" "${BASE_TAG}" "${GSTREAMER_VERSION}" "${PYTHON_VERSION}")"
 
     BUILD_ARGS=(
-        --build-arg BASE_IMAGE=${BASE_IMAGE}:${BASE_TAG}
-        --build-arg GSTREAMER_VERSION=${GSTREAMER_VERSION}
-        --build-arg PYTHON_VERSION=${PYTHON_VERSION}
-        --build-arg UV_VERSION=${UV_VERSION}
-        --build-arg GSTREAMER_BUILD_TYPE=${GSTREAMER_BUILD_TYPE}
+        --build-arg "BASE_IMAGE=${BASE_IMAGE}:${BASE_TAG}"
+        --build-arg "GSTREAMER_VERSION=${GSTREAMER_VERSION}"
+        --build-arg "PYTHON_VERSION=${PYTHON_VERSION}"
+        --build-arg "UV_VERSION=${UV_VERSION}"
+        --build-arg "GSTREAMER_BUILD_TYPE=${GSTREAMER_BUILD_TYPE}"
         --progress auto
         --tag "${TAG}"
+        --target final
         .
     )
 
@@ -55,16 +68,22 @@ build GSTREAMER_BUILD_TYPE BASE_IMAGE BASE_TAG GSTREAMER_VERSION PYTHON_VERSION 
         docker build "${BUILD_ARGS[@]}"
     fi
 
-build-debug BASE_IMAGE="ubuntu" BASE_TAG="24.04" GSTREAMER_VERSION="1.28.1" PYTHON_VERSION="3.12" UV_VERSION="latest": (build "debug" BASE_IMAGE BASE_TAG GSTREAMER_VERSION PYTHON_VERSION UV_VERSION)
+build-debug BASE_IMAGE="ubuntu" BASE_TAG="24.04" GSTREAMER_VERSION="1.28.3" PYTHON_VERSION="3.12" UV_VERSION="latest": (build "debug" BASE_IMAGE BASE_TAG GSTREAMER_VERSION PYTHON_VERSION UV_VERSION)
 
-build-release BASE_IMAGE="ubuntu" BASE_TAG="24.04" GSTREAMER_VERSION="1.28.1" PYTHON_VERSION="3.12" UV_VERSION="latest": (build "release" BASE_IMAGE BASE_TAG GSTREAMER_VERSION PYTHON_VERSION UV_VERSION)
+build-release BASE_IMAGE="ubuntu" BASE_TAG="24.04" GSTREAMER_VERSION="1.28.3" PYTHON_VERSION="3.12" UV_VERSION="latest": (build "release" BASE_IMAGE BASE_TAG GSTREAMER_VERSION PYTHON_VERSION UV_VERSION)
 
 # run container with example plugin mounted and gst-inspect it
-run-example BASE_IMAGE="ubuntu" BASE_TAG="24.04" GSTREAMER_VERSION="1.28.1" PYTHON_VERSION="3.12":
+run-example BASE_IMAGE="ubuntu" BASE_TAG="24.04" GSTREAMER_VERSION="1.28.3" PYTHON_VERSION="3.12":
     #!/usr/bin/env bash
     set -euo pipefail
 
-    IMAGE="gstreamer:gst-{{ GSTREAMER_VERSION }}-{{ BASE_IMAGE }}.{{ BASE_TAG }}-py-{{ PYTHON_VERSION }}-debug"
+    BASE_IMAGE={{ BASE_IMAGE }}
+    BASE_TAG={{ BASE_TAG }}
+    GSTREAMER_VERSION={{ GSTREAMER_VERSION }}
+    PYTHON_VERSION={{ PYTHON_VERSION }}
+
+    IMAGE="gstreamer:gst-${GSTREAMER_VERSION}-${BASE_IMAGE}.${BASE_TAG}-py-${PYTHON_VERSION}-debug"
+    IMAGE="gstreamer:gst-${GSTREAMER_VERSION}-${BASE_IMAGE}.${BASE_TAG}-py-${PYTHON_VERSION}"
 
     if ! docker image inspect "${IMAGE}" &>/dev/null; then
         echo "Image '${IMAGE}' not found. Build it first with:"

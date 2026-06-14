@@ -87,3 +87,23 @@ just build debug ubuntu 24.04 1.28.1 3.12 latest
 just build debugoptimized ubuntu 25.10 1.26.2 3.13 latest
 ```
 
+
+## Build types:
+
+- `base`: only base image with python bindings
+-
+
+### todo: personalize versions:
+
+i.e
+
+Core (gstreamer): Contiene Gst, GstBase, GstController, GstNet.
+
+Base (gst-plugins-base): GstVideo, GstAudio, GstApp, GstPbutils, GstRtp, GstRtsp, GstSdp, GstAllocators.
+
+# fix stty in docker debug console
+
+```bash
+stty rows 75 cols 254
+reset
+```
