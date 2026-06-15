@@ -9,6 +9,7 @@ FROM ${BASE_IMAGE} AS base_with_uv
 LABEL description="Base ubuntu image with python installed with UV instead of the system one."
 LABEL org.opencontainers.image.description="Base ubuntu image with python installed with UV instead of the system one."
 LABEL org.opencontainers.image.authors="matteo.bruni@gmail.com"
+LABEL org.opencontainers.image.source="https://github.com/matteo-bruni/gstreamer-oci"
 
 ARG PYTHON_VERSION=3.12
 
@@ -75,6 +76,9 @@ RUN apt-get update && \
         # gstreamer generic dependencies
         flex libunwind-dev libdw-dev libgmp-dev libglib2.0-dev \
         clang libclang-dev bison \
+        # needed by cargo
+        libssl-dev \
+        libgl1-mesa-dev libegl1-mesa-dev libgles2-mesa-dev libdrm-dev libwayland-dev libx11-dev libgbm-dev \
         # needed for gst-python
         libgirepository1.0-dev libgirepository-2.0-dev \
         gir1.2-girepository-3.0-dev \
@@ -89,8 +93,10 @@ RUN apt-get update && \
     fi && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# gst will be installed here before being copied to the final image, we use a custom install dir to avoid polluting the build image and to be able to copy only the installed files in the final image
-ENV PATH=${GSTREAMER_INSTALL_DIR}/bin:${PATH}
+# Keep the Cargo bin dir on PATH even for non-full builds; the directory may
+# not exist, which is harmless, and avoids needing conditional ENV handling.
+# Also prepend the custom GStreamer install dir for tools produced during build.
+ENV PATH=/root/.cargo/bin:${GSTREAMER_INSTALL_DIR}/bin:${PATH}
 
 # Install python package dependencies
 # jinja2 and pygments are needed for the gstreamer documentation build
@@ -104,13 +110,13 @@ RUN uv pip install --no-cache \
     typogrify \
     setuptools
 
-# TODO: provide installation with rust plugins in a `full` build variant
-# RUST & CARGO-C INSTALLATION 
-# ENV PATH="/root/.cargo/bin:${PATH}"
-# # needed to build the gst-plugins-rs
-# RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal && \
-#     cargo install cargo-c && \
-#     rm -rf $HOME/.cargo/registry $HOME/.cargo/git
+# RUST & CARGO-C INSTALLATION
+# Only needed for the `full` profile, where gst-plugins-rs is enabled.
+RUN if [ "${GSTREAMER_BUILD_PROFILE}" = "full" ]; then \
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal && \
+        cargo install cargo-c && \
+        rm -rf "$HOME/.cargo/registry" "$HOME/.cargo/git"; \
+    fi
 
 # build gstreamer from source
 RUN mkdir -p ${GSTREAMER_PATH} && \
@@ -134,7 +140,7 @@ RUN mkdir -p ${GSTREAMER_PATH} && \
     fi && \
     if [ "${GSTREAMER_BUILD_PROFILE}" = "full" ]; then \
         # full with libav and rust plugins
-        MESON_FEATURES="-Dgood=enabled -Dbad=enabled -Dugly=enabled -Dlibav=enabled -Drs=enabled"; \
+        MESON_FEATURES="-Dgood=enabled -Dbad=enabled -Dugly=enabled -Dlibav=enabled -Drs=enabled -Dgst-plugins-rs:csound=disabled"; \
     else \
         # base profile
         MESON_FEATURES="-Dgood=enabled -Dbad=enabled -Dugly=enabled -Dlibav=disabled"; \
@@ -246,6 +252,7 @@ FROM base_with_uv AS final
 LABEL description="Gstreamer built with meson to create gst-python wheel bindings package"
 LABEL org.opencontainers.image.description="Gstreamer built with meson to create gst-python wheel bindings package"
 LABEL org.opencontainers.image.authors="matteo.bruni@gmail.com"
+LABEL org.opencontainers.image.source="https://github.com/matteo-bruni/gstreamer-oci"
 
 ARG GSTREAMER_BUILD_PROFILE=base
 ARG GSTREAMER_ENABLE_NON_FREE=false
@@ -371,6 +378,7 @@ RUN apt-get update && \
 # (using DESTDIR=/install/gstreamer in the GStreamer builder)
 COPY --from=gstreamer_builder /install/gstreamer/ /
 
+
 # install the wheel previously built.
 # pygobject and pycairo need gcc so we use the already built wheels
 RUN --mount=type=bind,from=gstreamer_builder,source=/opt/wheel,target=/tmp/wheel \
@@ -379,4 +387,8 @@ RUN --mount=type=bind,from=gstreamer_builder,source=/opt/wheel,target=/tmp/wheel
         /tmp/wheel/pycairo-*.whl \
         /tmp/wheel/pygobject-*.whl && \
     uv pip install --no-cache --no-deps \
-        /tmp/wheel/gst_python_binding-*.whl
+        /tmp/wheel/gst_python_binding-*.whl && \
+    # Keep prebuilt wheels in the final image so release tooling can extract them
+    # after the image is built and before publishing release assets.
+    mkdir -p /opt/wheel && \
+    cp /tmp/wheel/gst_python_binding-*.whl /opt/wheel/

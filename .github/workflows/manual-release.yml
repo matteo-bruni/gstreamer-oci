@@ -1,0 +1,341 @@
+name: Manual Container Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      gstreamer_version:
+        description: GStreamer git tag or branch to build
+        required: true
+        default: "1.28.3"
+        type: string
+      python_versions:
+        description: Space-separated list of Python versions, for example "3.12 3.13"
+        required: true
+        default: "3.12"
+        type: string
+      base_image:
+        description: Base image repository
+        required: true
+        default: "ubuntu"
+        type: string
+      base_tag:
+        description: Base image tag
+        required: true
+        default: "24.04"
+        type: string
+      gstreamer_build_profile:
+        description: GStreamer build profile, for example "base" or "full"
+        required: true
+        default: "base"
+        type: string
+      gstreamer_enable_non_free:
+        description: Enable non-free dependencies and plugins
+        required: true
+        default: false
+        type: boolean
+      uv_version:
+        description: uv image tag
+        required: true
+        default: "0.11.16"
+        type: string
+      release_tag:
+        description: Optional Git tag for the GitHub Release. Leave empty to auto-generate it.
+        required: false
+        default: ""
+        type: string
+      release_name:
+        description: Optional GitHub Release title. Leave empty to auto-generate it.
+        required: false
+        default: ""
+        type: string
+      environment_name:
+        description: GitHub Environment used to protect the manual release job
+        required: true
+        default: "release"
+        type: string
+      dry_run:
+        description: Build and prepare release assets without pushing images or publishing the GitHub Release
+        required: true
+        default: false
+        type: boolean
+      prerelease:
+        description: Mark the GitHub Release as a prerelease
+        required: true
+        default: false
+        type: boolean
+      release_notes:
+        description: Extra release notes appended to the generated summary
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: manual-release-${{ inputs.release_tag != '' && inputs.release_tag || format('gst-python-binding-{0}-{1}-{2}-{3}{4}', inputs.gstreamer_version, inputs.base_image, inputs.base_tag, inputs.gstreamer_build_profile, inputs.gstreamer_enable_non_free && '-non-free' || '') }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build, publish, and release
+    runs-on: ubuntu-latest
+    timeout-minutes: 480
+    environment: ${{ inputs.environment_name }}
+    env:
+      GSTREAMER_VERSION: ${{ inputs.gstreamer_version }}
+      PYTHON_VERSIONS: ${{ inputs.python_versions }}
+      BASE_IMAGE: ${{ inputs.base_image }}
+      BASE_TAG: ${{ inputs.base_tag }}
+      GSTREAMER_BUILD_PROFILE: ${{ inputs.gstreamer_build_profile }}
+      GSTREAMER_ENABLE_NON_FREE: ${{ inputs.gstreamer_enable_non_free }}
+      UV_VERSION: ${{ inputs.uv_version }}
+      GHCR_IMAGE_NAME: gstreamer
+      CUSTOM_RELEASE_TAG: ${{ inputs.release_tag }}
+      CUSTOM_RELEASE_NAME: ${{ inputs.release_name }}
+      DRY_RUN: ${{ inputs.dry_run }}
+      PRERELEASE: ${{ inputs.prerelease }}
+      EXTRA_RELEASE_NOTES: ${{ inputs.release_notes }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      - name: Install just and jq
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends just jq
+
+      - name: Log in to GHCR
+        if: ${{ !inputs.dry_run }}
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute release metadata
+        id: release_meta
+        run: |
+          set -euo pipefail
+
+          owner_lc="$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          short_sha="$(printf '%s' "${GITHUB_SHA}" | cut -c1-12)"
+
+          non_free_suffix=""
+          non_free_label=""
+          if [ "${GSTREAMER_ENABLE_NON_FREE}" = "true" ]; then
+            non_free_suffix="-non-free"
+            non_free_label=", non-free"
+          fi
+
+          if [ -n "${CUSTOM_RELEASE_TAG}" ]; then
+            release_tag="${CUSTOM_RELEASE_TAG}"
+          else
+            release_tag="gst-python-binding-${GSTREAMER_VERSION}-${BASE_IMAGE}-${BASE_TAG}-${GSTREAMER_BUILD_PROFILE}${non_free_suffix}"
+          fi
+
+          if [ -n "${CUSTOM_RELEASE_NAME}" ]; then
+            release_name="${CUSTOM_RELEASE_NAME}"
+          else
+            release_name="GStreamer Python binding ${GSTREAMER_VERSION} (${BASE_IMAGE}:${BASE_TAG}, ${GSTREAMER_BUILD_PROFILE}${non_free_label})"
+          fi
+
+          {
+            echo "owner_lc=${owner_lc}"
+            echo "short_sha=${short_sha}"
+            echo "release_tag=${release_tag}"
+            echo "release_name=${release_name}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Build, push, extract wheel, and publish assets
+        env:
+          OWNER_LC: ${{ steps.release_meta.outputs.owner_lc }}
+          SHORT_SHA: ${{ steps.release_meta.outputs.short_sha }}
+          RELEASE_TAG: ${{ steps.release_meta.outputs.release_tag }}
+          RELEASE_NAME: ${{ steps.release_meta.outputs.release_name }}
+        run: |
+          set -euo pipefail
+
+          BUILD_TYPE="release"
+          BUILD_TYPE_EXPLANATION="release: optimized build, LTO enabled in the Dockerfile, no +debug local wheel suffix, intended for redistribution"
+
+          # Legge la stringa di versioni passate da input convertendola in array bash
+          read -r -a python_versions <<< "${PYTHON_VERSIONS}"
+          
+          image_repository="ghcr.io/${OWNER_LC}/${GHCR_IMAGE_NAME}"
+          assets_dir="release-assets"
+          notes_file="${assets_dir}/release-notes.md"
+          
+          rm -rf "${assets_dir}"
+          mkdir -p "${assets_dir}"
+
+          {
+            echo "Release generated by GitHub Actions."
+            echo
+            echo "- GStreamer version: ${GSTREAMER_VERSION}"
+            echo "- Base image: ${BASE_IMAGE}:${BASE_TAG}"
+            echo "- Build profile: ${GSTREAMER_BUILD_PROFILE}"
+            echo "- Non-free: ${GSTREAMER_ENABLE_NON_FREE}"
+            echo "- Build type: ${BUILD_TYPE}"
+            echo "- Python versions: ${PYTHON_VERSIONS}"
+            echo "- Commit: ${GITHUB_SHA}"
+            echo "- Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo "- GHCR repository: ${image_repository}"
+            echo "- Dry run: ${DRY_RUN}"
+            echo
+            echo "## Active options"
+            echo
+            echo "- Build type: ${BUILD_TYPE}"
+            echo "- Build type behavior: ${BUILD_TYPE_EXPLANATION}"
+            echo "- GStreamer build profile: ${GSTREAMER_BUILD_PROFILE}"
+            echo "- Non-free dependencies enabled: ${GSTREAMER_ENABLE_NON_FREE}"
+            echo
+            echo "## Published variants"
+          } > "${notes_file}"
+
+          for python_version in "${python_versions[@]}"; do
+            just build-release "${BASE_IMAGE}" "${BASE_TAG}" "${GSTREAMER_VERSION}" "${GSTREAMER_BUILD_PROFILE}" "${GSTREAMER_ENABLE_NON_FREE}" "${python_version}" "${UV_VERSION}"
+
+            local_tag="$(just image-tag release "${BASE_IMAGE}" "${BASE_TAG}" "${GSTREAMER_VERSION}" "${GSTREAMER_BUILD_PROFILE}" "${GSTREAMER_ENABLE_NON_FREE}" "${python_version}")"
+            image_suffix="${local_tag#*:}"
+            image_tag="${image_repository}:${image_suffix}"
+            image_tag_sha="${image_tag}-sha-${SHORT_SHA}"
+            variant_dir="${assets_dir}/py${python_version}"
+            mkdir -p "${variant_dir}"
+
+            if [ "${DRY_RUN}" != "true" ]; then
+              docker tag "${local_tag}" "${image_tag}"
+              docker tag "${local_tag}" "${image_tag_sha}"
+              docker push "${image_tag}"
+              docker push "${image_tag_sha}"
+            fi
+
+            container_id="$(docker create "${local_tag}")"
+            docker cp "${container_id}:/opt/wheel/." "${variant_dir}"
+            docker rm -v "${container_id}"
+
+            wheel_path="$(find "${variant_dir}" -maxdepth 1 -name 'gst_python_binding-*.whl' -print -quit)"
+            if [ -z "${wheel_path}" ]; then
+              echo "No wheel found in ${variant_dir}" >&2
+              exit 1
+            fi
+
+            original_wheel_name="$(basename "${wheel_path}")"
+            wheel_asset_name="${original_wheel_name}"
+            checksum_asset_name="${original_wheel_name}.sha256"
+            metadata_asset_name="py${python_version}-build-metadata.json"
+            
+            checksum_path="${variant_dir}/${checksum_asset_name}"
+            metadata_path="${variant_dir}/${metadata_asset_name}"
+
+            mv "${wheel_path}" "${variant_dir}/${wheel_asset_name}"
+
+            (
+              cd "${variant_dir}"
+              sha256sum "${wheel_asset_name}" > "${checksum_asset_name}"
+            )
+
+            jq \
+              -n \
+              --arg python_versions_str "${PYTHON_VERSIONS}" \
+              --arg wheel_file "${wheel_asset_name}" \
+              --arg image_tag "${image_tag}" \
+              --arg image_tag_sha "${image_tag_sha}" \
+              --arg release_tag "${RELEASE_TAG}" \
+              --arg build_profile "${GSTREAMER_BUILD_PROFILE}" \
+              --arg non_free "${GSTREAMER_ENABLE_NON_FREE}" \
+              --arg build_type "${BUILD_TYPE}" \
+              --arg build_type_explanation "${BUILD_TYPE_EXPLANATION}" \
+              --arg python_version "${python_version}" \
+              --arg git_sha "${GITHUB_SHA}" \
+              --arg git_short_sha "${SHORT_SHA}" \
+              --arg repository "${GITHUB_REPOSITORY}" \
+              --arg run_id "${GITHUB_RUN_ID}" \
+              --arg run_attempt "${GITHUB_RUN_ATTEMPT}" \
+              '{
+                requested_python_versions: ($python_versions_str | split(" ")),
+                wheel_file: $wheel_file,
+                image_tag: $image_tag,
+                image_tag_sha: $image_tag_sha,
+                release_tag: $release_tag,
+                build_profile: $build_profile,
+                non_free: $non_free,
+                python_version: $python_version,
+                build_type: $build_type,
+                build_type_explanation: $build_type_explanation,
+                git_sha: $git_sha,
+                git_short_sha: $git_short_sha,
+                repository: $repository,
+                run_id: $run_id,
+                run_attempt: $run_attempt
+              }' > "${metadata_path}"
+
+            docker run --rm "${local_tag}" python -c "from gi.repository import Gst; Gst.init(None)"
+            docker run --rm "${local_tag}" gst-inspect-1.0 python >/dev/null
+            (
+              cd "${variant_dir}"
+              sha256sum -c "${checksum_asset_name}"
+            )
+
+            {
+              echo
+              echo "### Python ${python_version}"
+              echo
+              if [ "${DRY_RUN}" = "true" ]; then
+                echo "- OCI image: dry-run, not published"
+                echo "- Intended tag: \`${image_tag}\`"
+                echo "- Intended immutable tag: \`${image_tag_sha}\`"
+              else
+                echo "- OCI image: ${image_tag}"
+                echo "- Immutable OCI tag: ${image_tag_sha}"
+                echo "- Pull command: \`docker pull ${image_tag}\`"
+                echo "- Pull immutable tag: \`docker pull ${image_tag_sha}\`"
+              fi
+              echo "- Build profile: ${GSTREAMER_BUILD_PROFILE}"
+              echo "- Non-free: ${GSTREAMER_ENABLE_NON_FREE}"
+              echo "- Build type: ${BUILD_TYPE}"
+              echo "- Build type behavior: ${BUILD_TYPE_EXPLANATION}"
+              echo "- Wheel asset: ${wheel_asset_name}"
+              echo "- Checksum asset: ${checksum_asset_name}"
+              echo "- Metadata asset: ${metadata_asset_name}"
+            } >> "${notes_file}"
+          done
+
+          if [ -n "${EXTRA_RELEASE_NOTES}" ]; then
+            {
+              echo
+              echo "## Notes"
+              echo
+              printf '%s\n' "${EXTRA_RELEASE_NOTES}"
+            } >> "${notes_file}"
+          fi
+
+      - name: Upload prepared release assets
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: manual-release-assets-${{ github.run_id }}
+          path: release-assets/
+          if-no-files-found: warn
+          retention-days: 14
+          compression-level: 0
+
+      - name: Publish GitHub Release
+        if: ${{ !inputs.dry_run }}
+        uses: softprops/action-gh-release@6cbd405e2c4e67a21c47fa9e383d020e4e28b836 # v2.3.3
+        with:
+          tag_name: ${{ steps.release_meta.outputs.release_tag }}
+          name: ${{ steps.release_meta.outputs.release_name }}
+          body_path: release-assets/release-notes.md
+          files: |
+            release-assets/**/*.whl
+            release-assets/**/*.sha256
+            release-assets/**/*.json
+          prerelease: ${{ inputs.prerelease }}
+          fail_on_unmatched_files: true
+          target_commitish: ${{ github.sha }}
