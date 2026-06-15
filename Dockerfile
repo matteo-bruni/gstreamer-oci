@@ -57,7 +57,9 @@ FROM base_with_uv AS gstreamer_builder
 ARG GSTREAMER_VERSION
 ARG MESON_VERSION=1.5.2
 ARG GSTREAMER_BUILD_TYPE=debug
-# profile like base, full
+# Build profile selector:
+# - base: standard plugin stack with Python bindings and introspection
+# - full: base plus gst-libav and Rust plugins from gst-plugins-rs
 ARG GSTREAMER_BUILD_PROFILE=base 
 
 # GSTREAMER OPTIONS
@@ -139,10 +141,10 @@ RUN mkdir -p ${GSTREAMER_PATH} && \
         NON_FREE=""; \
     fi && \
     if [ "${GSTREAMER_BUILD_PROFILE}" = "full" ]; then \
-        # full with libav and rust plugins
+        # full profile: base plugins plus libav and Rust plugins
         MESON_FEATURES="-Dgood=enabled -Dbad=enabled -Dugly=enabled -Dlibav=enabled -Drs=enabled -Dgst-plugins-rs:csound=disabled"; \
     else \
-        # base profile
+        # base profile: no libav and no Rust plugins
         MESON_FEATURES="-Dgood=enabled -Dbad=enabled -Dugly=enabled -Dlibav=disabled"; \
     fi && \
     # configure with meson
@@ -256,6 +258,11 @@ LABEL org.opencontainers.image.source="https://github.com/matteo-bruni/gstreamer
 
 ARG GSTREAMER_BUILD_PROFILE=base
 ARG GSTREAMER_ENABLE_NON_FREE=false
+
+# Runtime profile note:
+# - base/full currently share the same runtime package list here
+# - full enables extra plugins at build time rather than extra runtime apt packages
+# - non-free toggles additional codec and driver packages below
 
 # TODO: to make it work across ubuntu version we can do something like
 # APT_PKGS="$APT_PKGS ^libavcodec[0-9]+$ ^libavformat[0-9]+$ ^libavutil[0-9]+$"

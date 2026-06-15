@@ -50,8 +50,15 @@ just build debugoptimized ubuntu 25.10 1.26.2 base false 3.13 latest
 
 `GSTREAMER_BUILD_PROFILE`:
 
-- `base`: base plugin set plus Python bindings.
-- `full`: enables the broader plugin profile, including Rust plugin support and the extra toolchain needed for it.
+- `base`: includes `gst-plugins-base`, `gst-plugins-good`, `gst-plugins-bad`, `gst-plugins-ugly`, RTSP server support, Python support, and GObject introspection. It does not enable `gst-libav` or Rust plugins.
+- `full`: includes everything from `base`, and also enables `gst-libav` plus Rust-based plugins from `gst-plugins-rs`. The build installs Rust and `cargo-c` in the builder stage for this profile. The `csound` Rust plugin is currently disabled.
+
+Profile comparison:
+
+| Profile | Enabled components | Not enabled |
+|---|---|---|
+| `base` | `gst-plugins-base`, `gst-plugins-good`, `gst-plugins-bad`, `gst-plugins-ugly`, RTSP server, Python support, GObject introspection | `gst-libav`, Rust plugins from `gst-plugins-rs` |
+| `full` | Everything in `base`, plus `gst-libav` and Rust plugins from `gst-plugins-rs` | `gst-plugins-rs:csound` |
 
 `GSTREAMER_ENABLE_NON_FREE`:
 
@@ -136,7 +143,11 @@ The local release script and the GitHub Actions manual release workflow:
 - publish them under `ghcr.io/<owner>/gstreamer` by default, independently from the repository name
 - extract wheel artifacts from `/opt/wheel`
 - keep the original wheel filenames in the release assets
-- add release notes that describe the active build options, including build profile, non-free toggle, and build type behavior
+- add release notes that describe the active build options, including build profile, what that profile enables, non-free toggle, and build type behavior
+
+Release notes for `base` explain that the published image contains the standard plugin stack with Python bindings and introspection, without `gst-libav` or Rust plugins.
+
+Release notes for `full` explain that the published image adds `gst-libav` and Rust-based plugins on top of `base`, with the Rust toolchain used during the build and the `csound` Rust plugin currently disabled.
 
 If you need a different remote image name, set `GHCR_IMAGE_NAME` before running `scripts/local-release.sh`. The manual GitHub Actions workflow currently defaults to `gstreamer` as well.
 

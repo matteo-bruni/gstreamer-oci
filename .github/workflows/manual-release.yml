@@ -24,12 +24,15 @@ on:
         default: "24.04"
         type: string
       gstreamer_build_profile:
-        description: GStreamer build profile, for example "base" or "full"
+        description: Release profile. base = standard plugin stack with Python bindings; full = base plus gst-libav and Rust plugins
         required: true
         default: "base"
-        type: string
+        type: choice
+        options:
+          - base
+          - full
       gstreamer_enable_non_free:
-        description: Enable non-free dependencies and plugins
+        description: Enable non-free codec and driver dependencies and append -non-free to the published tag
         required: true
         default: false
         type: boolean
@@ -163,6 +166,11 @@ jobs:
 
           BUILD_TYPE="release"
           BUILD_TYPE_EXPLANATION="release: optimized build, LTO enabled in the Dockerfile, no +debug local wheel suffix, intended for redistribution"
+          if [ "${GSTREAMER_BUILD_PROFILE}" = "full" ]; then
+            BUILD_PROFILE_EXPLANATION="full: includes the base profile plus gst-libav and Rust-based plugins; installs the Rust and cargo-c toolchain during the build; currently disables the gst-plugins-rs csound plugin"
+          else
+            BUILD_PROFILE_EXPLANATION="base: includes the core release profile with gst-plugins-base, gst-plugins-good, gst-plugins-bad, gst-plugins-ugly, RTSP server support, Python support, and GObject introspection; gst-libav and Rust plugins are disabled"
+          fi
 
           # Legge la stringa di versioni passate da input convertendola in array bash
           read -r -a python_versions <<< "${PYTHON_VERSIONS}"
@@ -193,6 +201,7 @@ jobs:
             echo "- Build type: ${BUILD_TYPE}"
             echo "- Build type behavior: ${BUILD_TYPE_EXPLANATION}"
             echo "- GStreamer build profile: ${GSTREAMER_BUILD_PROFILE}"
+            echo "- GStreamer build profile behavior: ${BUILD_PROFILE_EXPLANATION}"
             echo "- Non-free dependencies enabled: ${GSTREAMER_ENABLE_NON_FREE}"
             echo
             echo "## Published variants"
@@ -229,11 +238,6 @@ jobs:
             wheel_asset_name="${original_wheel_name}"
             checksum_asset_name="${original_wheel_name}.sha256"
             metadata_asset_name="py${python_version}-build-metadata.json"
-            
-            checksum_path="${variant_dir}/${checksum_asset_name}"
-            metadata_path="${variant_dir}/${metadata_asset_name}"
-
-            mv "${wheel_path}" "${variant_dir}/${wheel_asset_name}"
 
             (
               cd "${variant_dir}"
@@ -273,7 +277,7 @@ jobs:
                 repository: $repository,
                 run_id: $run_id,
                 run_attempt: $run_attempt
-              }' > "${metadata_path}"
+              }' > "${variant_dir}/${metadata_asset_name}"
 
             docker run --rm "${local_tag}" python -c "from gi.repository import Gst; Gst.init(None)"
             docker run --rm "${local_tag}" gst-inspect-1.0 python >/dev/null
@@ -297,6 +301,7 @@ jobs:
                 echo "- Pull immutable tag: \`docker pull ${image_tag_sha}\`"
               fi
               echo "- Build profile: ${GSTREAMER_BUILD_PROFILE}"
+              echo "- Build profile behavior: ${BUILD_PROFILE_EXPLANATION}"
               echo "- Non-free: ${GSTREAMER_ENABLE_NON_FREE}"
               echo "- Build type: ${BUILD_TYPE}"
               echo "- Build type behavior: ${BUILD_TYPE_EXPLANATION}"

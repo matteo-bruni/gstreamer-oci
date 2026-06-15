@@ -64,6 +64,11 @@ prompt_for_bool "Create as Draft (hidden until manually published)? (y/N)" "N" D
 
 BUILD_TYPE="release"
 BUILD_TYPE_EXPLANATION="release: optimized build, LTO enabled in the Dockerfile, no +debug local wheel suffix, intended for redistribution"
+if [ "${GSTREAMER_BUILD_PROFILE}" = "full" ]; then
+    BUILD_PROFILE_EXPLANATION="full: includes the base profile plus gst-libav and Rust-based plugins; installs the Rust and cargo-c toolchain during the build; currently disables the gst-plugins-rs csound plugin"
+else
+    BUILD_PROFILE_EXPLANATION="base: includes the core release profile with gst-plugins-base, gst-plugins-good, gst-plugins-bad, gst-plugins-ugly, RTSP server support, Python support, and GObject introspection; gst-libav and Rust plugins are disabled"
+fi
 
 # GitHub context mapping
 GH_REPO="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
@@ -151,6 +156,7 @@ mkdir -p "${ASSETS_DIR}"
     echo "- Build type: ${BUILD_TYPE}"
     echo "- Build type behavior: ${BUILD_TYPE_EXPLANATION}"
     echo "- GStreamer build profile: ${GSTREAMER_BUILD_PROFILE}"
+        echo "- GStreamer build profile behavior: ${BUILD_PROFILE_EXPLANATION}"
     echo "- Non-free dependencies enabled: ${GSTREAMER_ENABLE_NON_FREE}"
     echo
   echo "## Published variants"
@@ -196,8 +202,6 @@ for py_ver in "${py_versions_array[@]}"; do
     checksum_asset="${original_wheel}.sha256"
     metadata_asset="py${py_ver}-build-metadata.json"
 
-    mv "${wheel_path}" "${variant_dir}/${wheel_asset}"
-
     (
         cd "${variant_dir}"
         sha256sum "${wheel_asset}" > "${checksum_asset}"
@@ -239,6 +243,7 @@ for py_ver in "${py_versions_array[@]}"; do
         echo
         echo "- OCI image: ${image_tag}"
         echo "- Build profile: ${GSTREAMER_BUILD_PROFILE}"
+        echo "- Build profile behavior: ${BUILD_PROFILE_EXPLANATION}"
         echo "- Non-free: ${GSTREAMER_ENABLE_NON_FREE}"
         echo "- Build type: ${BUILD_TYPE}"
         echo "- Build type behavior: ${BUILD_TYPE_EXPLANATION}"
