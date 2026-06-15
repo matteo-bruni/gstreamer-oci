@@ -143,6 +143,7 @@ The local release script and the GitHub Actions manual release workflow:
 - publish them under `ghcr.io/<owner>/gstreamer` by default, independently from the repository name
 - extract wheel artifacts from `/opt/wheel`
 - keep the original wheel filenames in the release assets
+- support `release`, `debug`, and `debugoptimized` build types
 - add release notes that describe the active build options, including build profile, what that profile enables, non-free toggle, and build type behavior
 
 Release notes for `base` explain that the published image contains the standard plugin stack with Python bindings and introspection, without `gst-libav` or Rust plugins.
@@ -150,6 +151,14 @@ Release notes for `base` explain that the published image contains the standard 
 Release notes for `full` explain that the published image adds `gst-libav` and Rust-based plugins on top of `base`, with the Rust toolchain used during the build and the `csound` Rust plugin currently disabled.
 
 If you need a different remote image name, set `GHCR_IMAGE_NAME` before running `scripts/local-release.sh`. The manual GitHub Actions workflow currently defaults to `gstreamer` as well.
+
+The local release script prompts for the same core build choices exposed by the GitHub Actions workflow:
+
+- build profile: `base` or `full`
+- build type: `release`, `debug`, or `debugoptimized`
+- non-free toggle: enabled or disabled
+
+The GitHub Actions workflow exposes `build_type` as a dropdown. The local script accepts the same values interactively and validates them before building.
 
 ## Terminal fix
 

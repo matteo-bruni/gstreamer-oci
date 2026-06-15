@@ -57,13 +57,28 @@ prompt_for "Base image" "ubuntu" BASE_IMAGE
 prompt_for "Base tag" "24.04" BASE_TAG
 prompt_for "GStreamer build profile" "base" GSTREAMER_BUILD_PROFILE
 prompt_for_bool "Enable non-free dependencies? (y/N)" "N" GSTREAMER_ENABLE_NON_FREE
+prompt_for "Build type (release/debug/debugoptimized)" "release" BUILD_TYPE
 prompt_for "uv version" "0.11.16" UV_VERSION
 prompt_for_bool "Is this a Dry Run? (y/N)" "N" DRY_RUN
 prompt_for_bool "Mark as Pre-release? (y/N)" "N" PRERELEASE
 prompt_for_bool "Create as Draft (hidden until manually published)? (y/N)" "N" DRAFT
 
-BUILD_TYPE="release"
-BUILD_TYPE_EXPLANATION="release: optimized build, LTO enabled in the Dockerfile, no +debug local wheel suffix, intended for redistribution"
+case "${BUILD_TYPE}" in
+    release)
+        BUILD_TYPE_EXPLANATION="release: optimized build, LTO enabled in the Dockerfile, no +debug local wheel suffix, intended for redistribution"
+        ;;
+    debug)
+        BUILD_TYPE_EXPLANATION="debug: debug-oriented build, keeps debug symbols, image tags end with -debug, and the wheel version gets a +debug local suffix"
+        ;;
+    debugoptimized)
+        BUILD_TYPE_EXPLANATION="debugoptimized: optimized debug build between full debug and release; image tags end with -debugoptimized"
+        ;;
+    *)
+        echo "Fatal error: unsupported build type '${BUILD_TYPE}'. Use one of: release, debug, debugoptimized." >&2
+        exit 1
+        ;;
+esac
+
 if [ "${GSTREAMER_BUILD_PROFILE}" = "full" ]; then
     BUILD_PROFILE_EXPLANATION="full: includes the base profile plus gst-libav and Rust-based plugins; installs the Rust and cargo-c toolchain during the build; currently disables the gst-plugins-rs csound plugin"
 else
@@ -80,13 +95,19 @@ IMAGE_REPOSITORY="ghcr.io/${OWNER_LC}/${GHCR_IMAGE_NAME}"
 # Generate release identifiers
 NON_FREE_SUFFIX=""
 NON_FREE_LABEL=""
+BUILD_TYPE_SUFFIX=""
+BUILD_TYPE_LABEL=""
 if [ "${GSTREAMER_ENABLE_NON_FREE}" = "true" ]; then
     NON_FREE_SUFFIX="-non-free"
     NON_FREE_LABEL=", non-free"
 fi
+if [ "${BUILD_TYPE}" != "release" ]; then
+    BUILD_TYPE_SUFFIX="-${BUILD_TYPE}"
+    BUILD_TYPE_LABEL=", ${BUILD_TYPE}"
+fi
 
-RELEASE_TAG="gst-python-binding-${GSTREAMER_VERSION}-${BASE_IMAGE}-${BASE_TAG}-${GSTREAMER_BUILD_PROFILE}${NON_FREE_SUFFIX}"
-RELEASE_NAME="GStreamer Python binding ${GSTREAMER_VERSION} (${BASE_IMAGE}:${BASE_TAG}, ${GSTREAMER_BUILD_PROFILE}${NON_FREE_LABEL})"
+RELEASE_TAG="gst-python-binding-${GSTREAMER_VERSION}-${BASE_IMAGE}-${BASE_TAG}-${GSTREAMER_BUILD_PROFILE}${BUILD_TYPE_SUFFIX}${NON_FREE_SUFFIX}"
+RELEASE_NAME="GStreamer Python binding ${GSTREAMER_VERSION} (${BASE_IMAGE}:${BASE_TAG}, ${GSTREAMER_BUILD_PROFILE}${BUILD_TYPE_LABEL}${NON_FREE_LABEL})"
 SHORT_SHA="$(git rev-parse --short=12 HEAD)"
 GIT_SHA="$(git rev-parse HEAD)"
 
@@ -132,7 +153,7 @@ echo ""
 echo "========================================"
 echo "Starting build for Release: $RELEASE_TAG"
 echo "GHCR Repository: $IMAGE_REPOSITORY"
-echo "Build profile: $GSTREAMER_BUILD_PROFILE | Non-free: $GSTREAMER_ENABLE_NON_FREE"
+echo "Build profile: $GSTREAMER_BUILD_PROFILE | Build type: $BUILD_TYPE | Non-free: $GSTREAMER_ENABLE_NON_FREE"
 echo "Dry Run: $DRY_RUN | Pre-release: $PRERELEASE | Draft: $DRAFT"
 echo "========================================"
 
@@ -156,7 +177,7 @@ mkdir -p "${ASSETS_DIR}"
     echo "- Build type: ${BUILD_TYPE}"
     echo "- Build type behavior: ${BUILD_TYPE_EXPLANATION}"
     echo "- GStreamer build profile: ${GSTREAMER_BUILD_PROFILE}"
-        echo "- GStreamer build profile behavior: ${BUILD_PROFILE_EXPLANATION}"
+    echo "- GStreamer build profile behavior: ${BUILD_PROFILE_EXPLANATION}"
     echo "- Non-free dependencies enabled: ${GSTREAMER_ENABLE_NON_FREE}"
     echo
   echo "## Published variants"
@@ -167,9 +188,9 @@ read -r -a py_versions_array <<< "${PYTHON_VERSIONS}"
 # 4. BUILD AND ASSET PREPARATION
 for py_ver in "${py_versions_array[@]}"; do
     echo "Building Python ${py_ver} variant..."
-    just build-release "${BASE_IMAGE}" "${BASE_TAG}" "${GSTREAMER_VERSION}" "${GSTREAMER_BUILD_PROFILE}" "${GSTREAMER_ENABLE_NON_FREE}" "${py_ver}" "${UV_VERSION}"
+    just build "${BUILD_TYPE}" "${BASE_IMAGE}" "${BASE_TAG}" "${GSTREAMER_VERSION}" "${GSTREAMER_BUILD_PROFILE}" "${GSTREAMER_ENABLE_NON_FREE}" "${py_ver}" "${UV_VERSION}"
 
-    local_tag="$(just image-tag release "${BASE_IMAGE}" "${BASE_TAG}" "${GSTREAMER_VERSION}" "${GSTREAMER_BUILD_PROFILE}" "${GSTREAMER_ENABLE_NON_FREE}" "${py_ver}")"
+    local_tag="$(just image-tag "${BUILD_TYPE}" "${BASE_IMAGE}" "${BASE_TAG}" "${GSTREAMER_VERSION}" "${GSTREAMER_BUILD_PROFILE}" "${GSTREAMER_ENABLE_NON_FREE}" "${py_ver}")"
     image_suffix="${local_tag#*:}"
     image_tag="${IMAGE_REPOSITORY}:${image_suffix}"
     image_tag_sha="${image_tag}-sha-${SHORT_SHA}"

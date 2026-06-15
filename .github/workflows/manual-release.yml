@@ -36,6 +36,15 @@ on:
         required: true
         default: false
         type: boolean
+      build_type:
+        description: Meson/Docker build type. release = distributable build, debug = debug symbols and +debug wheel suffix, debugoptimized = optimized debug build
+        required: true
+        default: release
+        type: choice
+        options:
+          - release
+          - debug
+          - debugoptimized
       uv_version:
         description: uv image tag
         required: true
@@ -52,7 +61,7 @@ on:
         default: ""
         type: string
       environment_name:
-        description: GitHub Environment used to protect the manual release job
+        description: GitHub Environment name for approvals, protected secrets, and deployment rules. Usually keep `release`
         required: true
         default: "release"
         type: string
@@ -77,7 +86,7 @@ permissions:
   packages: write
 
 concurrency:
-  group: manual-release-${{ inputs.release_tag != '' && inputs.release_tag || format('gst-python-binding-{0}-{1}-{2}-{3}{4}', inputs.gstreamer_version, inputs.base_image, inputs.base_tag, inputs.gstreamer_build_profile, inputs.gstreamer_enable_non_free && '-non-free' || '') }}
+  group: manual-release-${{ inputs.release_tag != '' && inputs.release_tag || format('gst-python-binding-{0}-{1}-{2}-{3}{4}{5}', inputs.gstreamer_version, inputs.base_image, inputs.base_tag, inputs.gstreamer_build_profile, inputs.build_type != 'release' && format('-{0}', inputs.build_type) || '', inputs.gstreamer_enable_non_free && '-non-free' || '') }}
   cancel-in-progress: false
 
 jobs:
@@ -93,6 +102,7 @@ jobs:
       BASE_TAG: ${{ inputs.base_tag }}
       GSTREAMER_BUILD_PROFILE: ${{ inputs.gstreamer_build_profile }}
       GSTREAMER_ENABLE_NON_FREE: ${{ inputs.gstreamer_enable_non_free }}
+      BUILD_TYPE: ${{ inputs.build_type }}
       UV_VERSION: ${{ inputs.uv_version }}
       GHCR_IMAGE_NAME: gstreamer
       CUSTOM_RELEASE_TAG: ${{ inputs.release_tag }}
@@ -131,21 +141,28 @@ jobs:
 
           non_free_suffix=""
           non_free_label=""
+          build_type_suffix=""
+          build_type_label=""
           if [ "${GSTREAMER_ENABLE_NON_FREE}" = "true" ]; then
             non_free_suffix="-non-free"
             non_free_label=", non-free"
           fi
 
+          if [ "${BUILD_TYPE}" != "release" ]; then
+            build_type_suffix="-${BUILD_TYPE}"
+            build_type_label=", ${BUILD_TYPE}"
+          fi
+
           if [ -n "${CUSTOM_RELEASE_TAG}" ]; then
             release_tag="${CUSTOM_RELEASE_TAG}"
           else
-            release_tag="gst-python-binding-${GSTREAMER_VERSION}-${BASE_IMAGE}-${BASE_TAG}-${GSTREAMER_BUILD_PROFILE}${non_free_suffix}"
+            release_tag="gst-python-binding-${GSTREAMER_VERSION}-${BASE_IMAGE}-${BASE_TAG}-${GSTREAMER_BUILD_PROFILE}${build_type_suffix}${non_free_suffix}"
           fi
 
           if [ -n "${CUSTOM_RELEASE_NAME}" ]; then
             release_name="${CUSTOM_RELEASE_NAME}"
           else
-            release_name="GStreamer Python binding ${GSTREAMER_VERSION} (${BASE_IMAGE}:${BASE_TAG}, ${GSTREAMER_BUILD_PROFILE}${non_free_label})"
+            release_name="GStreamer Python binding ${GSTREAMER_VERSION} (${BASE_IMAGE}:${BASE_TAG}, ${GSTREAMER_BUILD_PROFILE}${build_type_label}${non_free_label})"
           fi
 
           {
@@ -164,8 +181,21 @@ jobs:
         run: |
           set -euo pipefail
 
-          BUILD_TYPE="release"
-          BUILD_TYPE_EXPLANATION="release: optimized build, LTO enabled in the Dockerfile, no +debug local wheel suffix, intended for redistribution"
+          case "${BUILD_TYPE}" in
+            release)
+              BUILD_TYPE_EXPLANATION="release: optimized build, LTO enabled in the Dockerfile, no +debug local wheel suffix, intended for redistribution"
+              ;;
+            debug)
+              BUILD_TYPE_EXPLANATION="debug: debug-oriented build, keeps debug symbols, image tags end with -debug, and the wheel version gets a +debug local suffix"
+              ;;
+            debugoptimized)
+              BUILD_TYPE_EXPLANATION="debugoptimized: optimized debug build between full debug and release; image tags end with -debugoptimized"
+              ;;
+            *)
+              echo "Unsupported BUILD_TYPE: ${BUILD_TYPE}" >&2
+              exit 1
+              ;;
+          esac
           if [ "${GSTREAMER_BUILD_PROFILE}" = "full" ]; then
             BUILD_PROFILE_EXPLANATION="full: includes the base profile plus gst-libav and Rust-based plugins; installs the Rust and cargo-c toolchain during the build; currently disables the gst-plugins-rs csound plugin"
           else
@@ -208,9 +238,9 @@ jobs:
           } > "${notes_file}"
 
           for python_version in "${python_versions[@]}"; do
-            just build-release "${BASE_IMAGE}" "${BASE_TAG}" "${GSTREAMER_VERSION}" "${GSTREAMER_BUILD_PROFILE}" "${GSTREAMER_ENABLE_NON_FREE}" "${python_version}" "${UV_VERSION}"
+            just build "${BUILD_TYPE}" "${BASE_IMAGE}" "${BASE_TAG}" "${GSTREAMER_VERSION}" "${GSTREAMER_BUILD_PROFILE}" "${GSTREAMER_ENABLE_NON_FREE}" "${python_version}" "${UV_VERSION}"
 
-            local_tag="$(just image-tag release "${BASE_IMAGE}" "${BASE_TAG}" "${GSTREAMER_VERSION}" "${GSTREAMER_BUILD_PROFILE}" "${GSTREAMER_ENABLE_NON_FREE}" "${python_version}")"
+            local_tag="$(just image-tag "${BUILD_TYPE}" "${BASE_IMAGE}" "${BASE_TAG}" "${GSTREAMER_VERSION}" "${GSTREAMER_BUILD_PROFILE}" "${GSTREAMER_ENABLE_NON_FREE}" "${python_version}")"
             image_suffix="${local_tag#*:}"
             image_tag="${image_repository}:${image_suffix}"
             image_tag_sha="${image_tag}-sha-${SHORT_SHA}"
