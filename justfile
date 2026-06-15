@@ -73,7 +73,7 @@ build GSTREAMER_BUILD_TYPE BASE_IMAGE BASE_TAG GSTREAMER_VERSION GSTREAMER_BUILD
     # use buildx debug if available, otherwise fall back to plain docker build
     if docker buildx debug --help &>/dev/null; then
         export BUILDX_EXPERIMENTAL=1
-        docker buildx debug --on=error --invoke=/bin/bash build "${BUILD_ARGS[@]}"
+        docker buildx debug --on=error --invoke=/bin/bash build --load "${BUILD_ARGS[@]}"
     else
         echo "Note: buildx debug not available, using plain docker build"
         docker build "${BUILD_ARGS[@]}"
