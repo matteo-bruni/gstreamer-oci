@@ -51,17 +51,37 @@ prompt_for_bool() {
     fi
 }
 
+validate_choice() {
+    local value="$1"
+    local field_name="$2"
+    shift 2
+    local allowed
+
+    for allowed in "$@"; do
+        if [ "${value}" = "${allowed}" ]; then
+            return 0
+        fi
+    done
+
+    echo "Fatal error: unsupported ${field_name} '${value}'. Allowed values: $*." >&2
+    exit 1
+}
+
 prompt_for "GStreamer version" "1.28.3" GSTREAMER_VERSION
 prompt_for "Python versions (space-separated)" "3.12" PYTHON_VERSIONS
 prompt_for "Base image" "ubuntu" BASE_IMAGE
 prompt_for "Base tag" "24.04" BASE_TAG
-prompt_for "GStreamer build profile" "base" GSTREAMER_BUILD_PROFILE
+prompt_for "GStreamer build profile (base/full)" "base" GSTREAMER_BUILD_PROFILE
 prompt_for_bool "Enable non-free dependencies? (y/N)" "N" GSTREAMER_ENABLE_NON_FREE
+prompt_for_bool "Build dev image with builder target? (y/N)" "N" GSTREAMER_DEV
 prompt_for "Build type (release/debug/debugoptimized)" "release" BUILD_TYPE
 prompt_for "uv version" "0.11.16" UV_VERSION
 prompt_for_bool "Is this a Dry Run? (y/N)" "N" DRY_RUN
 prompt_for_bool "Mark as Pre-release? (y/N)" "N" PRERELEASE
 prompt_for_bool "Create as Draft (hidden until manually published)? (y/N)" "N" DRAFT
+
+validate_choice "${GSTREAMER_BUILD_PROFILE}" "GStreamer build profile" base full
+validate_choice "${BUILD_TYPE}" "build type" release debug debugoptimized
 
 case "${BUILD_TYPE}" in
     release)
@@ -85,6 +105,16 @@ else
     BUILD_PROFILE_EXPLANATION="base: includes the core release profile with gst-plugins-base, gst-plugins-good, gst-plugins-bad, gst-plugins-ugly, RTSP server support, Python support, and GObject introspection; gst-libav and Rust plugins are disabled"
 fi
 
+if [ "${GSTREAMER_DEV}" = "true" ]; then
+    DEV_SUFFIX="-dev"
+    DEV_LABEL=", dev"
+    DEV_EXPLANATION="dev: builds the Docker gstreamer_builder stage and keeps compilers, headers, source tree, and build dependencies inside the image"
+else
+    DEV_SUFFIX=""
+    DEV_LABEL=""
+    DEV_EXPLANATION="non-dev: builds the Docker final stage for the slimmer runtime/distribution image"
+fi
+
 # GitHub context mapping
 GH_REPO="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
 GH_USER="$(gh api user --jq .login)"
@@ -106,8 +136,8 @@ if [ "${BUILD_TYPE}" != "release" ]; then
     BUILD_TYPE_LABEL=", ${BUILD_TYPE}"
 fi
 
-RELEASE_TAG="gst-python-binding-${GSTREAMER_VERSION}-${BASE_IMAGE}-${BASE_TAG}-${GSTREAMER_BUILD_PROFILE}${BUILD_TYPE_SUFFIX}${NON_FREE_SUFFIX}"
-RELEASE_NAME="GStreamer Python binding ${GSTREAMER_VERSION} (${BASE_IMAGE}:${BASE_TAG}, ${GSTREAMER_BUILD_PROFILE}${BUILD_TYPE_LABEL}${NON_FREE_LABEL})"
+RELEASE_TAG="gst-python-binding-${GSTREAMER_VERSION}-${BASE_IMAGE}-${BASE_TAG}-${GSTREAMER_BUILD_PROFILE}${BUILD_TYPE_SUFFIX}${DEV_SUFFIX}${NON_FREE_SUFFIX}"
+RELEASE_NAME="GStreamer Python binding ${GSTREAMER_VERSION} (${BASE_IMAGE}:${BASE_TAG}, ${GSTREAMER_BUILD_PROFILE}${BUILD_TYPE_LABEL}${DEV_LABEL}${NON_FREE_LABEL})"
 SHORT_SHA="$(git rev-parse --short=12 HEAD)"
 GIT_SHA="$(git rev-parse HEAD)"
 
@@ -153,7 +183,7 @@ echo ""
 echo "========================================"
 echo "Starting build for Release: $RELEASE_TAG"
 echo "GHCR Repository: $IMAGE_REPOSITORY"
-echo "Build profile: $GSTREAMER_BUILD_PROFILE | Build type: $BUILD_TYPE | Non-free: $GSTREAMER_ENABLE_NON_FREE"
+echo "Build profile: $GSTREAMER_BUILD_PROFILE | Build type: $BUILD_TYPE | Dev: $GSTREAMER_DEV | Non-free: $GSTREAMER_ENABLE_NON_FREE"
 echo "Dry Run: $DRY_RUN | Pre-release: $PRERELEASE | Draft: $DRAFT"
 echo "========================================"
 
@@ -166,6 +196,7 @@ mkdir -p "${ASSETS_DIR}"
   echo "- GStreamer version: ${GSTREAMER_VERSION}"
   echo "- Base image: ${BASE_IMAGE}:${BASE_TAG}"
     echo "- Build profile: ${GSTREAMER_BUILD_PROFILE}"
+    echo "- Dev image: ${GSTREAMER_DEV}"
     echo "- Non-free: ${GSTREAMER_ENABLE_NON_FREE}"
     echo "- Build type: ${BUILD_TYPE}"
   echo "- Python versions: ${PYTHON_VERSIONS}"
@@ -178,6 +209,8 @@ mkdir -p "${ASSETS_DIR}"
     echo "- Build type behavior: ${BUILD_TYPE_EXPLANATION}"
     echo "- GStreamer build profile: ${GSTREAMER_BUILD_PROFILE}"
     echo "- GStreamer build profile behavior: ${BUILD_PROFILE_EXPLANATION}"
+    echo "- Dev image enabled: ${GSTREAMER_DEV}"
+    echo "- Dev image behavior: ${DEV_EXPLANATION}"
     echo "- Non-free dependencies enabled: ${GSTREAMER_ENABLE_NON_FREE}"
     echo
   echo "## Published variants"
@@ -188,9 +221,9 @@ read -r -a py_versions_array <<< "${PYTHON_VERSIONS}"
 # 4. BUILD AND ASSET PREPARATION
 for py_ver in "${py_versions_array[@]}"; do
     echo "Building Python ${py_ver} variant..."
-    just build "${BUILD_TYPE}" "${BASE_IMAGE}" "${BASE_TAG}" "${GSTREAMER_VERSION}" "${GSTREAMER_BUILD_PROFILE}" "${GSTREAMER_ENABLE_NON_FREE}" "${py_ver}" "${UV_VERSION}"
+    just build "${BUILD_TYPE}" "${BASE_IMAGE}" "${BASE_TAG}" "${GSTREAMER_VERSION}" "${GSTREAMER_BUILD_PROFILE}" "${GSTREAMER_ENABLE_NON_FREE}" "${GSTREAMER_DEV}" "${py_ver}" "${UV_VERSION}"
 
-    local_tag="$(just image-tag "${BUILD_TYPE}" "${BASE_IMAGE}" "${BASE_TAG}" "${GSTREAMER_VERSION}" "${GSTREAMER_BUILD_PROFILE}" "${GSTREAMER_ENABLE_NON_FREE}" "${py_ver}")"
+    local_tag="$(just image-tag "${BUILD_TYPE}" "${BASE_IMAGE}" "${BASE_TAG}" "${GSTREAMER_VERSION}" "${GSTREAMER_BUILD_PROFILE}" "${GSTREAMER_ENABLE_NON_FREE}" "${GSTREAMER_DEV}" "${py_ver}")"
     image_suffix="${local_tag#*:}"
     image_tag="${IMAGE_REPOSITORY}:${image_suffix}"
     image_tag_sha="${image_tag}-sha-${SHORT_SHA}"
@@ -236,6 +269,7 @@ for py_ver in "${py_versions_array[@]}"; do
       --arg rel_tag "${RELEASE_TAG}" \
             --arg build_profile "${GSTREAMER_BUILD_PROFILE}" \
             --arg non_free "${GSTREAMER_ENABLE_NON_FREE}" \
+        --arg dev_image "${GSTREAMER_DEV}" \
             --arg build_type "${BUILD_TYPE}" \
             --arg build_type_explanation "${BUILD_TYPE_EXPLANATION}" \
       --arg py_ver "${py_ver}" \
@@ -250,6 +284,7 @@ for py_ver in "${py_versions_array[@]}"; do
         release_tag: $rel_tag,
                 build_profile: $build_profile,
                 non_free: $non_free,
+            dev_image: $dev_image,
         python_version: $py_ver,
                 build_type: $build_type,
                 build_type_explanation: $build_type_explanation,
@@ -265,6 +300,8 @@ for py_ver in "${py_versions_array[@]}"; do
         echo "- OCI image: ${image_tag}"
         echo "- Build profile: ${GSTREAMER_BUILD_PROFILE}"
         echo "- Build profile behavior: ${BUILD_PROFILE_EXPLANATION}"
+        echo "- Dev image: ${GSTREAMER_DEV}"
+        echo "- Dev image behavior: ${DEV_EXPLANATION}"
         echo "- Non-free: ${GSTREAMER_ENABLE_NON_FREE}"
         echo "- Build type: ${BUILD_TYPE}"
         echo "- Build type behavior: ${BUILD_TYPE_EXPLANATION}"

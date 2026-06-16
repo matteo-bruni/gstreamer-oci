@@ -184,7 +184,7 @@ RUN mkdir -p ${GSTREAMER_PATH} && \
     # actual build
     ninja -C build 2>&1 | tee -a ${GSTREAMER_PATH}/build.log && \
     # install everything but the gst-python binding, we will install it later after we build the python package
-    # ninja -C build install 2>&1 | tee -a ${GSTREAMER_PATH}/build.log && \
+    ninja -C build install 2>&1 | tee -a ${GSTREAMER_PATH}/build.log && \
     # also install in a custom install dir to be copied in later images
     DESTDIR=${GSTREAMER_INSTALL_DIR} ninja -C build install 2>&1 | tee -a ${GSTREAMER_PATH}/build.log && \
     rm -f /root/.cache/gstreamer-1.0/registry.x86_64.bin 

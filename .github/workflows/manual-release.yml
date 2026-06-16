@@ -36,6 +36,11 @@ on:
         required: true
         default: false
         type: boolean
+      gstreamer_dev:
+        description: Build the dev image variant on the gstreamer_builder target instead of the final runtime target, and append -dev to the published tag
+        required: true
+        default: false
+        type: boolean
       build_type:
         description: Meson/Docker build type. release = distributable build, debug = debug symbols and +debug wheel suffix, debugoptimized = optimized debug build
         required: true
@@ -86,7 +91,7 @@ permissions:
   packages: write
 
 concurrency:
-  group: manual-release-${{ inputs.release_tag != '' && inputs.release_tag || format('gst-python-binding-{0}-{1}-{2}-{3}{4}{5}', inputs.gstreamer_version, inputs.base_image, inputs.base_tag, inputs.gstreamer_build_profile, inputs.build_type != 'release' && format('-{0}', inputs.build_type) || '', inputs.gstreamer_enable_non_free && '-non-free' || '') }}
+  group: manual-release-${{ inputs.release_tag != '' && inputs.release_tag || format('gst-python-binding-{0}-{1}-{2}-{3}{4}{5}{6}', inputs.gstreamer_version, inputs.base_image, inputs.base_tag, inputs.gstreamer_build_profile, inputs.build_type != 'release' && format('-{0}', inputs.build_type) || '', inputs.gstreamer_dev && '-dev' || '', inputs.gstreamer_enable_non_free && '-non-free' || '') }}
   cancel-in-progress: false
 
 jobs:
@@ -102,6 +107,7 @@ jobs:
       BASE_TAG: ${{ inputs.base_tag }}
       GSTREAMER_BUILD_PROFILE: ${{ inputs.gstreamer_build_profile }}
       GSTREAMER_ENABLE_NON_FREE: ${{ inputs.gstreamer_enable_non_free }}
+      GSTREAMER_DEV: ${{ inputs.gstreamer_dev }}
       BUILD_TYPE: ${{ inputs.build_type }}
       UV_VERSION: ${{ inputs.uv_version }}
       GHCR_IMAGE_NAME: gstreamer
@@ -141,11 +147,18 @@ jobs:
 
           non_free_suffix=""
           non_free_label=""
+          dev_suffix=""
+          dev_label=""
           build_type_suffix=""
           build_type_label=""
           if [ "${GSTREAMER_ENABLE_NON_FREE}" = "true" ]; then
             non_free_suffix="-non-free"
             non_free_label=", non-free"
+          fi
+
+          if [ "${GSTREAMER_DEV}" = "true" ]; then
+            dev_suffix="-dev"
+            dev_label=", dev"
           fi
 
           if [ "${BUILD_TYPE}" != "release" ]; then
@@ -156,13 +169,13 @@ jobs:
           if [ -n "${CUSTOM_RELEASE_TAG}" ]; then
             release_tag="${CUSTOM_RELEASE_TAG}"
           else
-            release_tag="gst-python-binding-${GSTREAMER_VERSION}-${BASE_IMAGE}-${BASE_TAG}-${GSTREAMER_BUILD_PROFILE}${build_type_suffix}${non_free_suffix}"
+            release_tag="gst-python-binding-${GSTREAMER_VERSION}-${BASE_IMAGE}-${BASE_TAG}-${GSTREAMER_BUILD_PROFILE}${build_type_suffix}${dev_suffix}${non_free_suffix}"
           fi
 
           if [ -n "${CUSTOM_RELEASE_NAME}" ]; then
             release_name="${CUSTOM_RELEASE_NAME}"
           else
-            release_name="GStreamer Python binding ${GSTREAMER_VERSION} (${BASE_IMAGE}:${BASE_TAG}, ${GSTREAMER_BUILD_PROFILE}${build_type_label}${non_free_label})"
+            release_name="GStreamer Python binding ${GSTREAMER_VERSION} (${BASE_IMAGE}:${BASE_TAG}, ${GSTREAMER_BUILD_PROFILE}${build_type_label}${dev_label}${non_free_label})"
           fi
 
           {
@@ -201,6 +214,11 @@ jobs:
           else
             BUILD_PROFILE_EXPLANATION="base: includes the core release profile with gst-plugins-base, gst-plugins-good, gst-plugins-bad, gst-plugins-ugly, RTSP server support, Python support, and GObject introspection; gst-libav and Rust plugins are disabled"
           fi
+          if [ "${GSTREAMER_DEV}" = "true" ]; then
+            DEV_EXPLANATION="dev: builds the Docker gstreamer_builder stage and keeps compilers, headers, source tree, and build dependencies inside the image"
+          else
+            DEV_EXPLANATION="non-dev: builds the Docker final stage for the slimmer runtime/distribution image"
+          fi
 
           # Legge la stringa di versioni passate da input convertendola in array bash
           read -r -a python_versions <<< "${PYTHON_VERSIONS}"
@@ -218,6 +236,7 @@ jobs:
             echo "- GStreamer version: ${GSTREAMER_VERSION}"
             echo "- Base image: ${BASE_IMAGE}:${BASE_TAG}"
             echo "- Build profile: ${GSTREAMER_BUILD_PROFILE}"
+            echo "- Dev image: ${GSTREAMER_DEV}"
             echo "- Non-free: ${GSTREAMER_ENABLE_NON_FREE}"
             echo "- Build type: ${BUILD_TYPE}"
             echo "- Python versions: ${PYTHON_VERSIONS}"
@@ -232,15 +251,17 @@ jobs:
             echo "- Build type behavior: ${BUILD_TYPE_EXPLANATION}"
             echo "- GStreamer build profile: ${GSTREAMER_BUILD_PROFILE}"
             echo "- GStreamer build profile behavior: ${BUILD_PROFILE_EXPLANATION}"
+            echo "- Dev image enabled: ${GSTREAMER_DEV}"
+            echo "- Dev image behavior: ${DEV_EXPLANATION}"
             echo "- Non-free dependencies enabled: ${GSTREAMER_ENABLE_NON_FREE}"
             echo
             echo "## Published variants"
           } > "${notes_file}"
 
           for python_version in "${python_versions[@]}"; do
-            just build "${BUILD_TYPE}" "${BASE_IMAGE}" "${BASE_TAG}" "${GSTREAMER_VERSION}" "${GSTREAMER_BUILD_PROFILE}" "${GSTREAMER_ENABLE_NON_FREE}" "${python_version}" "${UV_VERSION}"
+            just build "${BUILD_TYPE}" "${BASE_IMAGE}" "${BASE_TAG}" "${GSTREAMER_VERSION}" "${GSTREAMER_BUILD_PROFILE}" "${GSTREAMER_ENABLE_NON_FREE}" "${GSTREAMER_DEV}" "${python_version}" "${UV_VERSION}"
 
-            local_tag="$(just image-tag "${BUILD_TYPE}" "${BASE_IMAGE}" "${BASE_TAG}" "${GSTREAMER_VERSION}" "${GSTREAMER_BUILD_PROFILE}" "${GSTREAMER_ENABLE_NON_FREE}" "${python_version}")"
+            local_tag="$(just image-tag "${BUILD_TYPE}" "${BASE_IMAGE}" "${BASE_TAG}" "${GSTREAMER_VERSION}" "${GSTREAMER_BUILD_PROFILE}" "${GSTREAMER_ENABLE_NON_FREE}" "${GSTREAMER_DEV}" "${python_version}")"
             image_suffix="${local_tag#*:}"
             image_tag="${image_repository}:${image_suffix}"
             image_tag_sha="${image_tag}-sha-${SHORT_SHA}"
@@ -283,6 +304,7 @@ jobs:
               --arg release_tag "${RELEASE_TAG}" \
               --arg build_profile "${GSTREAMER_BUILD_PROFILE}" \
               --arg non_free "${GSTREAMER_ENABLE_NON_FREE}" \
+              --arg dev_image "${GSTREAMER_DEV}" \
               --arg build_type "${BUILD_TYPE}" \
               --arg build_type_explanation "${BUILD_TYPE_EXPLANATION}" \
               --arg python_version "${python_version}" \
@@ -299,6 +321,7 @@ jobs:
                 release_tag: $release_tag,
                 build_profile: $build_profile,
                 non_free: $non_free,
+                dev_image: $dev_image,
                 python_version: $python_version,
                 build_type: $build_type,
                 build_type_explanation: $build_type_explanation,
@@ -332,6 +355,8 @@ jobs:
               fi
               echo "- Build profile: ${GSTREAMER_BUILD_PROFILE}"
               echo "- Build profile behavior: ${BUILD_PROFILE_EXPLANATION}"
+              echo "- Dev image: ${GSTREAMER_DEV}"
+              echo "- Dev image behavior: ${DEV_EXPLANATION}"
               echo "- Non-free: ${GSTREAMER_ENABLE_NON_FREE}"
               echo "- Build type: ${BUILD_TYPE}"
               echo "- Build type behavior: ${BUILD_TYPE_EXPLANATION}"
