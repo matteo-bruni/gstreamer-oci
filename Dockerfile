@@ -27,7 +27,6 @@ ENV UV_COMPILE_BYTECODE=1
 ENV UV_PROJECT_ENVIRONMENT=/opt/uv/venv
 ENV UV_PYTHON_INSTALL_DIR=/opt/uv/python
 ENV VIRTUAL_ENV=/opt/uv/venv
-ENV UV_CACHE_DIR=/opt/uv/cache/
 ENV UV_TOOL_BIN_DIR=/opt/uv/bin/
 ENV UV_RESOLUTION=highest
 ENV UV_HTTP_TIMEOUT=300
@@ -38,7 +37,10 @@ ENV UV_TOOLCHAIN_DIR=/opt/uv/toolchain-${PYTHON_VERSION}
 COPY --from=uv_source /uv /uvx /bin/
 
 # install python version and install in VIRTUAL_ENV
-RUN uv python install ${PYTHON_VERSION} --default && \
+RUN --mount=type=cache,id=gstreamer-oci-uv,target=/root/.cache/uv \
+    export UV_LINK_MODE=copy && \
+    export UV_PYTHON_CACHE_DIR=/root/.cache/uv/python && \
+    uv python install ${PYTHON_VERSION} --default && \
     uv venv ${VIRTUAL_ENV} && \
     # create custom toolchain dir with the version in the name
     ln -s $(${VIRTUAL_ENV}/bin/python -c "import sys; print(sys.base_prefix)") /opt/uv/toolchain-${PYTHON_VERSION} && \
@@ -103,7 +105,8 @@ ENV PATH=/root/.cargo/bin:${GSTREAMER_INSTALL_DIR}/bin:${PATH}
 # Install python package dependencies
 # jinja2 and pygments are needed for the gstreamer documentation build
 # typogrify is needed for the gstreamer website build
-RUN uv pip install --no-cache \
+RUN --mount=type=cache,id=gstreamer-oci-uv,target=/root/.cache/uv \
+    UV_LINK_MODE=copy uv pip install \
     cmake \
     meson==${MESON_VERSION} \
     ninja \
@@ -192,10 +195,12 @@ RUN mkdir -p ${GSTREAMER_PATH} && \
 # create a python package for easier redistribution of the gstreamer python overrides
 # the package will be called gst-python-binding to avoid name clash with gst-python
 RUN --mount=type=bind,src=build-utils,target=/tmp/build-utils \
+    --mount=type=cache,id=gstreamer-oci-uv,target=/root/.cache/uv \
     # we will build the package in a separate directory to avoid polluting the gstreamer source tree
+    export UV_LINK_MODE=copy && \
     export GST_PYTHON_BINDING_BUILD_DIR=${GSTREAMER_PATH}/gst-python-binding/ && \
     # install build dependencies
-    uv pip install --no-cache \
+    uv pip install \
         wheel \
         typing-extensions \
     && \
@@ -239,7 +244,7 @@ RUN --mount=type=bind,src=build-utils,target=/tmp/build-utils \
     mkdir -p ${PY_WHEEL_DIR} && \
     cp "${GST_PYTHON_BINDING_BUILD_DIR}/dist/"*.whl "${PY_WHEEL_DIR}/" && \
     # install
-    uv pip install --no-cache ${PY_WHEEL_DIR}/gst_python_binding-*.whl && \
+    uv pip install ${PY_WHEEL_DIR}/gst_python_binding-*.whl && \
     # Build dependency wheels here so the final image does not need a compiler
     # toolchain when installing gst_python_binding and its Python deps.
     uv run --with pip pip wheel \
@@ -389,11 +394,13 @@ COPY --from=gstreamer_builder /install/gstreamer/ /
 # install the wheel previously built.
 # pygobject and pycairo need gcc so we use the already built wheels
 RUN --mount=type=bind,from=gstreamer_builder,source=/opt/wheel,target=/tmp/wheel \
-    uv pip install --no-cache \
+    --mount=type=cache,id=gstreamer-oci-uv,target=/root/.cache/uv \
+    export UV_LINK_MODE=copy && \
+    uv pip install \
         typing-extensions \
         /tmp/wheel/pycairo-*.whl \
         /tmp/wheel/pygobject-*.whl && \
-    uv pip install --no-cache --no-deps \
+    uv pip install --no-deps \
         /tmp/wheel/gst_python_binding-*.whl && \
     # Keep prebuilt wheels in the final image so release tooling can extract them
     # after the image is built and before publishing release assets.
