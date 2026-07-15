@@ -217,9 +217,9 @@ RUN --mount=type=bind,src=build-utils,target=/tmp/build-utils \
         GST_WHEEL_VERSION="${GSTREAMER_VERSION}"; \
     fi && \
     sed -i 's/version = ".*"/version = "'"${GST_WHEEL_VERSION}"'"/' "${GST_PYTHON_BINDING_BUILD_DIR}/pyproject.toml" && \
-    # copy the compiled the .so files in the new package
+    # copy the compiled GStreamer override modules into the new package
     cp \
-        ${GSTREAMER_PATH}/build/subprojects/gst-python/gi/overrides/_gi_gst.*.so \
+        "${GSTREAMER_PATH}"/build/subprojects/gst-python/gi/overrides/_gi_gst*.so \
         "${GST_PYTHON_BINDING_BUILD_DIR}/src/gi/overrides/" && \
     # copy the .py files in the new package
     cp \
