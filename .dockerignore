@@ -1,0 +1,8 @@
+.git
+release-assets
+docs
+__pycache__
+*.pyc
+.codex
+.agents
+AGENTS.md

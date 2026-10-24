@@ -24,19 +24,20 @@ The preset recipes accept these positional parameters:
 |---|---|
 | `BASE_IMAGE` | `ubuntu` |
 | `BASE_TAG` | `24.04` |
-| `GSTREAMER_VERSION` | `1.28.3` |
+| `GSTREAMER_VERSION` | `1.28.8` |
 | `GSTREAMER_BUILD_PROFILE` | `base` |
-| `GSTREAMER_ENABLE_NON_FREE` | `false` |
-| `GSTREAMER_DEV` | `false` |
+| `VARIANT` | `free` |
+| `IMAGE_TARGET` | `runtime` |
 | `PYTHON_VERSION` | `3.12` |
-| `UV_VERSION` | `latest` |
+| `UV_VERSION` | `0.13.5` |
 
 Examples:
 
 ```bash
-just build-debug ubuntu 24.04 1.28.3 base false false 3.12 latest
-just build-release ubuntu 24.04 1.28.3 full true false 3.12 latest
-just build-debug ubuntu 24.04 1.28.3 base false true 3.12 latest
+just build-debug ubuntu 24.04 1.28.8 base free runtime 3.12 0.13.5
+just build-release ubuntu 24.04 1.28.8 full non-free runtime 3.12 0.13.5
+just build-release ubuntu 26.04 1.28.8 minimal free runtime 3.14 0.13.5
+just build-debug ubuntu 24.04 1.28.8 base free dev 3.12 0.13.5
 ```
 
 ### Custom build type
@@ -44,50 +45,59 @@ just build-debug ubuntu 24.04 1.28.3 base false true 3.12 latest
 The generic `build` recipe requires all parameters explicitly:
 
 ```bash
-just build debug ubuntu 24.04 1.28.3 base false false 3.12 latest
-just build release ubuntu 24.04 1.28.3 full true false 3.12 latest
-just build debugoptimized ubuntu 25.10 1.26.2 base false true 3.13 latest
+just build debug ubuntu 24.04 1.28.8 base free runtime 3.12 0.13.5
+just build release ubuntu 24.04 1.28.8 full non-free runtime 3.12 0.13.5
+just build debugoptimized ubuntu 26.04 1.28.8 base free dev 3.13 0.13.5
 ```
 
 ### Build options
 
-`GSTREAMER_BUILD_PROFILE`:
+`GSTREAMER_BUILD_PROFILE` selects components independently of the variant and image target:
 
-- `base`: includes `gst-plugins-base`, `gst-plugins-good`, `gst-plugins-bad`, `gst-plugins-ugly`, RTSP server support, Python support, and GObject introspection. It does not enable `gst-libav` or Rust plugins.
-- `full`: includes everything from `base`, and also enables `gst-libav` plus Rust-based plugins from `gst-plugins-rs`. The build installs Rust and `cargo-c` in the builder stage for this profile. The `csound` Rust plugin is currently disabled.
+| Profile | GStreamer, Python, GIRepository and introspection | GTK4/Atk | gst-libav | Rust plugins |
+|---|---|---|---|---|
+| `minimal` | yes | no | no | no |
+| `base` (default) | yes | yes | yes | no |
+| `full` | yes | yes | yes | yes |
 
-Profile comparison:
+All profiles include the standard base/good/bad/ugly plugin stack, RTSP support,
+GStreamer Python bindings and GstGL with X11, Wayland, EGL and surfaceless.
+`minimal` is suitable for GStreamer-only stub generation. GTK and its runtime
+packages are installed only for `base`/`full`; those profiles also enable
+`gst-libav`, independently of `VARIANT`. `full` additionally installs Rust and
+cargo-c and builds the supported Rust plugins; csound remains disabled.
+Only `base` is published by the repository's release flows for now. All three
+profiles remain available for local runtime and dev builds.
 
-| Profile | Enabled components | Not enabled |
-|---|---|---|
-| `base` | `gst-plugins-base`, `gst-plugins-good`, `gst-plugins-bad`, `gst-plugins-ugly`, RTSP server, Python support, GObject introspection | `gst-libav`, Rust plugins from `gst-plugins-rs` |
-| `full` | Everything in `base`, plus `gst-libav` and Rust plugins from `gst-plugins-rs` | `gst-plugins-rs:csound` |
+`VARIANT`:
 
-`GSTREAMER_ENABLE_NON_FREE`:
+- `free`: disables Meson's GPL option and x264/x265; omits the Intel non-free driver.
+- `non-free`: enables that GPL option, x264/x265 and their dependencies, plus the Intel non-free driver.
 
-- `false`: do not install non-free codec and driver dependencies.
-- `true`: enable non-free dependencies such as `intel-media-va-driver-non-free`, `x264`, and `x265`.
+This is a component selection, not a licensing classification of every file in
+the image. It applies to all three profiles; it does not control gst-libav or Rust.
 
-`GSTREAMER_DEV`:
+`IMAGE_TARGET`:
 
-- `false`: build the Docker `final` stage, which is the slimmer runtime/distribution image.
-- `true`: build the Docker `gstreamer_builder` stage, which keeps compilers, headers, source tree, and build dependencies inside the image.
+- `runtime`: selects Docker stage `final`, for executing applications and pipelines.
+- `dev`: selects `gstreamer_builder`, retaining compilers, headers, source and build directories.
 
 `GSTREAMER_BUILD_TYPE`:
 
-- `debug`: debug-oriented build, adds debug symbols, image tags end with `-debug`, and the wheel version gets a `+debug` local suffix.
-- `release`: optimized release build, LTO enabled in the Dockerfile, intended for redistribution.
-- `debugoptimized`: optimized debug build between full debug and release; image tags end with `-debugoptimized`.
+- `release`: optimized build with LTO.
+- `debug`: debug build; image tags append `-debug` and the binding wheel adds `+debug`.
+- `debugoptimized`: optimized debug build; image tags append `-debugoptimized`.
 
-Build output target by dev mode:
-
-- `GSTREAMER_DEV=false`: builds the Docker `final` stage.
-- `GSTREAMER_DEV=true`: builds the Docker `gstreamer_builder` stage.
-
-`GSTREAMER_BUILD_TYPE` and `GSTREAMER_DEV` are independent:
-
-- `GSTREAMER_BUILD_TYPE` controls how GStreamer is compiled.
-- `GSTREAMER_DEV` controls which Docker stage becomes the final image output.
+These choices are independent: a dev image can be compiled in release mode,
+and a runtime image can use a debug build. Dev image tags keep the `-dev` suffix.
+Just accepts `VARIANT` and `IMAGE_TARGET` in the same positional slots as before;
+legacy positional `false`/`true` values remain accepted. Shell and Docker
+configuration now use `VARIANT=free|non-free`; shell release configuration uses
+`IMAGE_TARGET=runtime|dev`. The previous `GSTREAMER_ENABLE_NON_FREE` and
+`GSTREAMER_DEV` environment/build-argument names have been replaced. Direct
+Docker commands select `--target final` or `--target gstreamer_builder`.
+Build/release metadata records the canonical variant and, for release metadata,
+the image target.
 
 ### Downstream non-root users
 
@@ -131,15 +141,15 @@ gstreamer:<gstreamer-version>-<base-image>.<base-tag>-<profile>-py-<python-versi
 Examples:
 
 ```text
-gstreamer:1.28.3-ubuntu.24.04-base-py-3.12-debug
-gstreamer:1.28.3-ubuntu.24.04-base-py-3.12-debug-dev
-gstreamer:1.28.3-ubuntu.24.04-full-py-3.12-non-free
-gstreamer:1.28.3-ubuntu.24.04-full-py-3.12-debug-non-free
+gstreamer:1.28.8-ubuntu.24.04-base-py-3.12-debug
+gstreamer:1.28.8-ubuntu.24.04-base-py-3.12-debug-dev
+gstreamer:1.28.8-ubuntu.24.04-full-py-3.12-non-free
+gstreamer:1.28.8-ubuntu.24.04-full-py-3.12-debug-non-free
 ```
 
 ### Run example plugins
 
-After `build-debug`, enter the container with:
+After `build-release`, enter the container with:
 
 ```bash
 just run-example
@@ -148,11 +158,13 @@ just run-example
 With explicit options:
 
 ```bash
-just run-example ubuntu 24.04 1.28.3 base false false 3.12 release
-just run-example ubuntu 24.04 1.28.3 base false true 3.12 debug
+just run-example ubuntu 24.04 1.28.8 base free runtime 3.12 release
+just run-example ubuntu 24.04 1.28.8 base free dev 3.12 debug
 ```
 
-`run-example` accepts `GSTREAMER_DEV` and `GSTREAMER_BUILD_TYPE` as the last positional parameters. Use the same values you used for the image build.
+`run-example` uses the same `VARIANT`, `IMAGE_TARGET` and Python choices as the
+build presets, followed by `GSTREAMER_BUILD_TYPE` as its final positional
+parameter. Use the same values you used for the image build.
 
 Once inside the container:
 
@@ -190,85 +202,142 @@ videotestsrc num-buffers=10
 
 ## Release flow
 
-The local release script and the GitHub Actions manual release workflow:
+Both `scripts/local-release.sh` and the manual GitHub Actions workflow publish
+only the `base` profile. The shared release script rejects publishing any other
+profile before building or contacting GitHub; direct dry runs can still verify
+other profiles. Use Just to build `minimal` or `full` locally.
 
-- publish OCI images to GHCR
-- publish them under `ghcr.io/<owner>/gstreamer` by default, independently from the repository name
-- extract wheel artifacts from `/opt/wheel`
-- keep the original wheel filenames in the release assets
-- support `dev` image variants that publish the builder-target image and append `-dev` to tags
-- support `release`, `debug`, and `debugoptimized` build types
-- keep `dev` builds on the Docker `gstreamer_builder` stage so the resulting image still contains the compilation toolchain and source tree
-- add release notes that describe the active build options, including build profile, what that profile enables, non-free toggle, and build type behavior
-
-Release notes for `base` explain that the published image contains the standard plugin stack with Python bindings and introspection, without `gst-libav` or Rust plugins.
-
-Release notes for `full` explain that the published image adds `gst-libav` and Rust-based plugins on top of `base`, with the Rust toolchain used during the build and the `csound` Rust plugin currently disabled.
-
-If you need a different remote image name, set `GHCR_IMAGE_NAME` before running `scripts/local-release.sh`. The manual GitHub Actions workflow currently defaults to `gstreamer` as well.
-
-The local release script prompts for the same core build choices exposed by the GitHub Actions workflow:
-
-- build profile: `base` or `full`
-- dev image: enabled or disabled
-- build type: `release`, `debug`, or `debugoptimized`
-- non-free toggle: enabled or disabled
-
-The GitHub Actions workflow exposes `build_type` as a dropdown and `gstreamer_dev` as a boolean toggle. The local script accepts the same values interactively and validates them before building.
-
-### Local release examples
-
-Start the interactive local release flow with:
+The release choices include Ubuntu/Python/GStreamer versions, `VARIANT`
+(`free`/`non-free`), `IMAGE_TARGET` (`runtime`/`dev`) and the independent build
+type (`release`/`debug`/`debugoptimized`). The workflow exposes variant and target
+as explicit dropdowns. The local script prompts for the same values.
 
 ```bash
 ./scripts/local-release.sh
 ```
 
-Example 1: runtime release image for publication
+For a normal release, choose `free` or `non-free`, target `runtime`, and build
+type `release`. For a development environment compiled with release optimizations,
+choose target `dev` and build type `release`; debug compilation is a separate choice.
 
-- `GStreamer build profile`: `base`
-- `Enable non-free dependencies?`: `N`
-- `Build dev image with builder target?`: `N`
-- `Build type`: `release`
-
-Result:
-
-- builds the Docker `final` stage
-- publishes a runtime-oriented image tag without `-dev`
-- uses the standard release wheel version without `+debug`
-
-Example 2: development image with debug symbols
-
-- `GStreamer build profile`: `base`
-- `Enable non-free dependencies?`: `N`
-- `Build dev image with builder target?`: `Y`
-- `Build type`: `debug`
-
-Result:
-
-- builds the Docker `gstreamer_builder` stage
-- publishes an image tag with both `-debug` and `-dev`
-- keeps compilers, headers, source tree, and build dependencies in the image
-- produces a wheel version with the `+debug` local suffix
-
-Example 3: full profile dev image with optimized debug build
-
-- `GStreamer build profile`: `full`
-- `Enable non-free dependencies?`: `Y`
-- `Build dev image with builder target?`: `Y`
-- `Build type`: `debugoptimized`
-
-Result:
-
-- builds the Docker `gstreamer_builder` stage
-- enables the `full` plugin profile plus non-free dependencies
-- publishes an image tag with `-debugoptimized-dev-non-free`
+The flows build and check every requested Python variant before pushing any
+image, extract all dependency/binding wheels from `/opt/wheel`, and publish a
+GitHub Release. Runtime and dev tags remain compatible with the existing naming
+scheme. They publish to `ghcr.io/<owner>/gstreamer` by default; override
+`GHCR_IMAGE_NAME` for local releases when required. Dry runs do not publish.
 
 ## Terminal fix
 
-when failing a build if the docker debug shell opens with a broken terminal size, fix it with:
+If you manually open a Docker Buildx debug shell with a broken terminal size, fix it with:
 
 ```bash
 stty rows 75 cols 254
 reset
 ```
+
+
+## Ubuntu variants and build cache
+
+The supported bases are Ubuntu 24.04 (default) and 26.04. Just selects
+`docker/ubuntu-24.04.Dockerfile` or `docker/ubuntu-26.04.Dockerfile` and passes
+the absolute Dockerfile path and repository root context to Buildx. There is no
+root Dockerfile or symlink. Other base images and Ubuntu versions are rejected
+before building. See [docker/readme.md](docker/readme.md) for stage descriptions,
+package roles and direct Docker commands.
+
+When invoking Docker directly, run from the repository root and select the file
+explicitly; the final `.` is the repository root, not the `docker/` directory:
+
+```bash
+docker buildx build --load --platform linux/amd64 \
+  --file docker/ubuntu-24.04.Dockerfile --target final .
+docker buildx build --load --platform linux/amd64 \
+  --file docker/ubuntu-26.04.Dockerfile --target final .
+```
+
+```bash
+just build-release ubuntu 26.04 1.28.8 base non-free runtime 3.14 0.13.5
+just verify-image gstreamer:1.28.8-ubuntu.26.04-base-py-3.14-non-free
+```
+
+Builds use noninteractive Buildx, six compilation jobs by default, LTO in release,
+and no documentation or example generation. GitHub Actions uses two jobs to fit hosted
+runner memory. Set `BUILD_JOBS` to control compilation
+parallelism, `BUILD_PROGRESS=plain` for logs, and `BUILDX_BUILDER` to choose a
+builder. Failures in commands piped through `tee` fail the build.
+
+`BUILD_CACHE_FROM` and `BUILD_CACHE_TO` accept Buildx cache specifications. For
+example, set `BUILD_CACHE_FROM=type=local,src=/path/to/cache` to import a cache,
+and `BUILD_CACHE_TO=type=local,dest=/path/to/new-cache,mode=max` to export it.
+Local compiler/Cargo cache mounts are separate from exported layer caches.
+Installation of locally produced wheels bypasses uv archive caching, because
+Ubuntu variants can produce different binaries with identical wheel filenames.
+CI uses a separate GHCR cache repository per Ubuntu/profile/non-free/build-type/
+Python combination on publishing runs. Dry runs do not enable registry exports.
+Rust retains its upstream release profile (thin LTO and debug information).
+The runtime copies native libraries into a layer before selecting Python, so
+Python variants also share that layer when exported or pushed.
+Changing the target Python should reuse the native stage; Python extensions and
+the Python plugin loader are rebuilt for that interpreter.
+
+The historical `non-free` flag enables Meson's GPL option and explicitly enables
+x264/x265, together with their dependencies and the Intel media driver. It is
+not a licensing classification of every file in the image. `free` explicitly
+disables GPL plugins and x264/x265; it is not a minimal dependency profile.
+Only numeric GStreamer release tags are accepted. Their existence is checked
+before compilation. The resolved upstream commit is included in build metadata.
+
+## Installing the Python wheel in another venv
+
+`gst-python-binding` contains GStreamer overrides and native extension modules.
+PyGObject owns the `gi` package. GStreamer shared libraries and typelibs remain
+system dependencies supplied by the image. The GStreamer Python plugin loader
+`libgstpython.so` is also part of the image, and is built for its Python version.
+Importing `gi.repository.Gst` in a venv and loading Python elements from
+`gst-launch-1.0` are separate operations.
+
+Every image keeps all required wheels and `build-environment.json` in
+`/opt/wheel`, so new venvs need neither network nor a compiler:
+
+```bash
+uv venv --python "$VIRTUAL_ENV/bin/python" /tmp/my-venv
+uv pip install --no-cache --python /tmp/my-venv/bin/python --no-index \
+  --find-links=/opt/wheel gst-python-binding
+/tmp/my-venv/bin/python -c 'import gi; gi.require_version("Gst", "1.0"); from gi.repository import Gst; Gst.init(None); print(Gst.version_string())'
+```
+
+Use a wheel matching the CPython minor version and architecture. Wheels from
+different Ubuntu builds have the same Linux platform tag: keep them in separate
+directories or releases. They are not certified manylinux wheels. Using the
+wheel with someone else's GStreamer build may work, but matching the GStreamer
+version alone does not establish compatible GLib/PyGObject/native dependencies
+or typelibs. In particular, do not assume a 26.04 wheel works on 24.04.
+
+Both release entry points use `scripts/release.sh`: all requested images pass
+container and clean-venv checks before the first image push. Publishing requires
+a clean Git working tree and a source commit already available on GitHub. It
+creates the release tag at that recorded source commit. Dependency wheels are included in release assets; identical shared
+wheel assets are uploaded once. A commit-based image tag is a convenience tag,
+not a registry immutability guarantee; use a digest when immutability is needed.
+
+## Verification
+
+```bash
+python3 -m unittest discover -s tests -p 'test_*.py' -v
+for file in scripts/*.sh build-utils/*.sh; do bash -n "$file"; done
+just verify-image <local-image-tag>
+```
+
+The orchestration tests mock Docker/GitHub and never publish. Container checks
+cover wheel metadata, interpreter isolation, RGB padding/stride/timestamps,
+offline venv installation as root and a non-root user, codec pipelines, and
+missing runtime libraries. Hardware acceleration, ARM, debug variants, and
+external distributions are not certified by the release-only verification.
+The normal plugin scan can blacklist `libgstvalidatessim.so`: upstream deliberately
+refuses to load it before GstValidate is initialized. Any other blacklisted
+plugin fails verification.
+
+The release-only matrix can be run with
+`BUILDX_BUILDER=<verification-builder> python3 tests/run-release-matrix.py`.
+It writes logs, wheel artifacts, plugin inventories and timing data under
+`docs/verification/` (excluded from Git and the Docker build context). It stops at the first failed build or check.

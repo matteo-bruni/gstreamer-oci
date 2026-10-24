@@ -6,8 +6,9 @@ gi.require_version("GObject", "2.0")
 gi.require_version("Gst", "1.0")
 gi.require_version("GstBase", "1.0")
 gi.require_version("GLib", "2.0")
+gi.require_version("GstVideo", "1.0")
 
-from gi.repository import Gst, GstBase, GObject, GLib
+from gi.repository import Gst, GstBase, GObject, GLib, GstVideo
 
 
 class GstPyWithProperty(GstBase.BaseTransform):
@@ -48,6 +49,7 @@ class GstPyWithProperty(GstBase.BaseTransform):
         nick="size",
         blurb="size of the red square",
         default=100,
+        minimum=0,
         flags=GObject.ParamFlags.READWRITE,
         setter=set_size,
     )
@@ -58,6 +60,7 @@ class GstPyWithProperty(GstBase.BaseTransform):
         super().__init__()
         self.size = 100
         self.buffer_count = 0
+        self._video_info = None
 
     def do_prepare_output_buffer(self, input: Gst.Buffer):
         """
@@ -96,33 +99,30 @@ class GstPyWithProperty(GstBase.BaseTransform):
             data_in = map_in.data
             data_out = map_out.data
             
-            # Quick example with memoryview or slicing
+            if len(data_out) != len(data_in):
+                return Gst.FlowReturn.ERROR
             data_out[:] = data_in
-            
-            # Draw a 100x100 red square in the center (assuming RGB, tightly packed)
-            width = 320  # default test width
-            height = 240 # default test height
-            pixel_size = 3  # RGB
-            square_size = self.size
-            # Try to get width/height from caps if possible
-            try:
-                caps = self.srcpad.get_current_caps()
-                s = caps.get_structure(0)
-                width = s.get_int('width')[1] or width
-                height = s.get_int('height')[1] or height
-            except Exception:
-                print("Could not get width/height from caps, using defaults")
-                pass
-            x0 = max(0, (width - square_size) // 2)
-            y0 = max(0, (height - square_size) // 2)
-            for y in range(y0, min(y0 + square_size, height)):
-                for x in range(x0, min(x0 + square_size, width)):
-                    idx = (y * width + x) * pixel_size
-                    if idx + 2 < len(data_out):
-                        data_out[idx] = 255   # R
-                        data_out[idx+1] = 0   # G
-                        data_out[idx+2] = 0   # B
-            
+            info = self._video_info
+            if info is None:
+                return Gst.FlowReturn.NOT_NEGOTIATED
+            meta = GstVideo.buffer_get_video_meta(inbuf)
+            width, height = info.width, info.height
+            stride, offset = info.stride[0], info.offset[0]
+            if meta is not None:
+                width, height = meta.width, meta.height
+                stride, offset = meta.stride[0], meta.offset[0]
+            # A custom VideoMeta may describe padded or bottom-up rows.
+            first = min(offset, offset + (height - 1) * stride)
+            last = max(offset, offset + (height - 1) * stride) + width * 3
+            if width <= 0 or height <= 0 or abs(stride) < width * 3 or first < 0 or last > len(data_out):
+                return Gst.FlowReturn.ERROR
+            square_size = min(self.size, width, height)
+            x0, y0 = (width - square_size) // 2, (height - square_size) // 2
+            row = bytes((255, 0, 0)) * square_size
+            for y in range(y0, y0 + square_size):
+                idx = offset + y * stride + x0 * 3
+                data_out[idx:idx + len(row)] = row
+
             # If everything is ok, return OK
             return Gst.FlowReturn.OK
 
@@ -136,6 +136,7 @@ class GstPyWithProperty(GstBase.BaseTransform):
     
 
     def do_set_caps(self, incaps: Gst.Caps, outcaps: Gst.Caps) -> bool:
+        self._video_info = GstVideo.VideoInfo.new_from_caps(incaps)
         self.set_passthrough(False)
         return True
 

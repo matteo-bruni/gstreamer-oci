@@ -1,1 +1,4 @@
 release-assets/
+/docs/
+__pycache__/
+*.pyc
