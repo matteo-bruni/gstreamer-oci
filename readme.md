@@ -287,6 +287,39 @@ wheel with someone else's GStreamer build may work, but matching the GStreamer
 version alone does not establish compatible GLib/PyGObject/native dependencies
 or typelibs. In particular, do not assume a 26.04 wheel works on 24.04.
 
+## Installing from the release wheel index
+
+The [wheel catalog](https://matteo-bruni.github.io/gstreamer-oci/) provides a
+separate Simple API index for each verified release and Ubuntu version. Python
+3.12/3.14 wheels can share an index; Ubuntu variants cannot. Select the index
+matching the native GStreamer installation. The index supplies the tested
+PyGObject and pycairo binaries; typing-extensions links use the original PyPI
+wheel. GStreamer libraries and system typelibs must already be installed.
+
+For example, in an Ubuntu 24.04 environment matching this release:
+
+```bash
+INDEX_URL="https://matteo-bruni.github.io/gstreamer-oci/releases/gst-python-binding-1.28.8-ubuntu-24.04-base-non-free/simple/"
+python -m pip install \
+    --only-binary=:all: \
+    --index-url "$INDEX_URL" \
+    'gst-python-binding==1.28.8'
+```
+
+With uv, replace the install command with:
+
+```bash
+uv pip install \
+    --only-binary=:all: \
+    --default-index "$INDEX_URL" \
+    'gst-python-binding==1.28.8'
+```
+
+These are distribution-specific Linux wheels, not portable manylinux wheels.
+External native installations may instead build PyGObject/pycairo from PyPI
+against their local libraries, subject to upstream minimum versions; that
+compatibility is not certified here.
+
 ## Verification
 
 ```bash

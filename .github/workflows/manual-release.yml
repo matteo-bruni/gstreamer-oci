@@ -166,3 +166,12 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
           compression-level: 0
+
+  wheel-index:
+    needs: release
+    if: ${{ !inputs.dry_run && !inputs.prerelease && inputs.image_target == 'runtime' && inputs.build_type == 'release' }}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/wheel-index.yml
