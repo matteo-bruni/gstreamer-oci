@@ -24,10 +24,14 @@ on:
         default: "ubuntu"
         type: string
       base_tag:
-        description: Base image tag
+        description: Ubuntu versions to build
         required: true
-        default: "24.04"
-        type: string
+        default: both
+        type: choice
+        options:
+          - both
+          - "24.04"
+          - "26.04"
       variant:
         description: Optional codec/driver variant (independent of the base profile)
         required: true
@@ -59,12 +63,12 @@ on:
         default: "0.13.5"
         type: string
       release_tag:
-        description: Optional Git tag for the GitHub Release. Leave empty to auto-generate it.
+        description: Optional Git tag. Both Ubuntu versions append -ubuntu-24.04/-ubuntu-26.04; empty generates the full tag.
         required: false
         default: ""
         type: string
       release_name:
-        description: Optional GitHub Release title. Leave empty to auto-generate it.
+        description: Optional release title. Both Ubuntu versions append the Ubuntu version; empty generates the title.
         required: false
         default: ""
         type: string
@@ -94,13 +98,18 @@ permissions:
   packages: write
 
 concurrency:
-  # Serialize revisions sharing the same aliases, including custom Git tags.
-  group: manual-release-${{ inputs.gstreamer_version }}-${{ inputs.base_image }}-${{ inputs.base_tag }}-${{ inputs.variant }}-${{ inputs.image_target }}-${{ inputs.build_type }}
+  # Serialize both/single-Ubuntu runs that can update the same aliases.
+  group: manual-release-${{ inputs.gstreamer_version }}-${{ inputs.base_image }}-${{ inputs.variant }}-${{ inputs.image_target }}-${{ inputs.build_type }}
   cancel-in-progress: false
 
 jobs:
   release:
-    name: Build, publish, and release
+    name: Ubuntu ${{ matrix.base_tag }} — build and release
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        base_tag: ${{ fromJSON(inputs.base_tag == 'both' && '["24.04","26.04"]' || format('["{0}"]', inputs.base_tag)) }}
     runs-on: ubuntu-latest
     timeout-minutes: 480
     environment: ${{ inputs.environment_name }}
@@ -109,7 +118,7 @@ jobs:
       RELEASE_REVISION: ${{ inputs.release_revision }}
       PYTHON_VERSIONS: ${{ inputs.python_versions }}
       BASE_IMAGE: ${{ inputs.base_image }}
-      BASE_TAG: ${{ inputs.base_tag }}
+      BASE_TAG: ${{ matrix.base_tag }}
       GSTREAMER_BUILD_PROFILE: base
       VARIANT: ${{ inputs.variant }}
       IMAGE_TARGET: ${{ inputs.image_target }}
@@ -117,8 +126,8 @@ jobs:
       BUILD_JOBS: "2"
       UV_VERSION: ${{ inputs.uv_version }}
       GHCR_IMAGE_NAME: gstreamer
-      CUSTOM_RELEASE_TAG: ${{ inputs.release_tag }}
-      CUSTOM_RELEASE_NAME: ${{ inputs.release_name }}
+      CUSTOM_RELEASE_TAG: ${{ inputs.base_tag == 'both' && inputs.release_tag != '' && format('{0}-ubuntu-{1}', inputs.release_tag, matrix.base_tag) || inputs.release_tag }}
+      CUSTOM_RELEASE_NAME: ${{ inputs.base_tag == 'both' && inputs.release_name != '' && format('{0} (Ubuntu {1})', inputs.release_name, matrix.base_tag) || inputs.release_name }}
       DRY_RUN: ${{ inputs.dry_run }}
       PRERELEASE: ${{ inputs.prerelease }}
       EXTRA_RELEASE_NOTES: ${{ inputs.release_notes }}
@@ -152,7 +161,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: manual-release-assets-${{ github.run_id }}
+          name: manual-release-assets-ubuntu-${{ matrix.base_tag }}-${{ github.run_id }}
           path: release-assets/
           if-no-files-found: warn
           retention-days: 14
