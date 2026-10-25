@@ -94,7 +94,7 @@ class OrchestrationTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0, value)
             self.assertFalse(marker.exists())
 
-    def run_release(self, failure='', dry_run='false', cache_to='', profile='base', revision='1', draft='false', prerelease='false', image_target='runtime', build_type='release'):
+    def run_release(self, failure='', dry_run='false', cache_to='', profile='base', revision='1', draft='false', prerelease='false', image_target='runtime', build_type='release', history=None, late_history=None):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp)
             shutil.copytree(ROOT / 'scripts', path / 'scripts')
@@ -121,6 +121,10 @@ elif name == 'gh':
     elif args[0]=='api' and '/commits/' in args[1]:
         if os.environ.get('TEST_FAILURE')=='commit': sys.exit(1)
         print('a'*40)
+    elif args[0]=='api' and any('/releases?per_page=' in arg for arg in args):
+        if os.environ.get('TEST_FAILURE')=='revision-api': sys.exit(8)
+        late=pathlib.Path(os.environ['TEST_IMAGE']).exists()
+        print(json.dumps([json.loads(os.environ['TEST_LATE_HISTORY' if late else 'TEST_HISTORY'])]))
     elif args[:2]==['release','create'] and os.environ.get('TEST_FAILURE')=='draft': sys.exit(6)
     elif args[:2]==['release','edit'] and os.environ.get('TEST_FAILURE')=='publish': sys.exit(7)
     elif args[:2]==['release','list'] and os.environ.get('TEST_FAILURE')=='release':
@@ -164,6 +168,14 @@ elif name == 'docker':
                 env.pop(key, None)
             env['BUILD_CACHE_TO'] = cache_to
             env['GITHUB_SHA'] = 'c' * 40
+            if history is None:
+                suffix = '' if build_type == 'release' else '-' + build_type
+                suffix += '-dev' if image_target == 'dev' else ''
+                tag = f'gst-python-binding-1.28.8-ubuntu-26.04-{profile}{suffix}-non-free'
+                history = [{'tag_name': tag + (f'-r{r}' if r > 1 else ''), 'draft': False, 'assets': []}
+                           for r in range(1, int(revision))] if revision.isdigit() else []
+            env['TEST_HISTORY'] = json.dumps(history)
+            env['TEST_LATE_HISTORY'] = json.dumps(history if late_history is None else late_history)
             result = subprocess.run(['bash', 'scripts/release.sh'], cwd=path, env=env, text=True, capture_output=True)
             self.release_metadata = {f.name: json.loads(f.read_text())
                 for f in (path/'release-assets/upload').glob('*build-metadata.json')}
@@ -265,6 +277,36 @@ exec bash "$1"
         self.assertEqual(len(pushes), 6)
         self.assertFalse(any('-r2-latest' in tag for tag in pushes))
         self.assertTrue(all(tag.endswith('-r2') or '-r2-sha-' in tag or tag.endswith('-non-free-latest') for tag in pushes))
+
+    def test_revision_rejections_and_api_errors_prevent_build_and_publication(self):
+        first = {'tag_name': 'gst-python-binding-1.28.8-ubuntu-26.04-base-non-free',
+                 'draft': False, 'assets': []}
+        for options in ({'revision': '2', 'history': []},
+                        {'revision': '1', 'history': [first]},
+                        {'revision': '3', 'history': [first]},
+                        {'revision': '1', 'history': [first | {'draft': True}]},
+                        {'failure': 'revision-api'}):
+            with self.subTest(options=options):
+                result, commands = self.run_release(**options)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('revision', result.stderr.lower())
+                self.assertFalse(any(c[0] == 'docker' for c in commands))
+                self.assertFalse(any(c[:3] == ['gh', 'release', 'create'] for c in commands))
+
+    def test_history_changed_during_builds_prevents_push(self):
+        first = {'tag_name': 'gst-python-binding-1.28.8-ubuntu-26.04-base-non-free',
+                 'draft': False, 'assets': []}
+        result, commands = self.run_release(history=[], late_history=[first])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('allowed revision r2', result.stderr)
+        self.assertTrue(any(c[:3] == ['docker', 'buildx', 'build'] for c in commands))
+        self.assertFalse(any(c[:2] == ['docker', 'push'] for c in commands))
+        self.assertFalse(any(c[:3] == ['gh', 'release', 'create'] for c in commands))
+
+    def test_dry_run_can_build_an_existing_revision_without_history_lookup(self):
+        result, commands = self.run_release(dry_run='true', failure='revision-api')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(any('/releases?per_page=' in ' '.join(c) for c in commands))
 
     def test_registry_collisions_and_lookup_errors_stop_before_build(self):
         for failure in ('registry-exists', 'registry-error'):

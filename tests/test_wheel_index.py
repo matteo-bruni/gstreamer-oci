@@ -122,6 +122,22 @@ class WheelIndexTests(unittest.TestCase):
                 self.assertNotIn("https://github.com/", typing)
                 self.assertEqual(typing.count("<a "), 1)
 
+    def test_additional_native_metadata_and_older_assets_remain_compatible(self):
+        releases = [self.release(), self.release('26.04')]
+        for py in ('3.12', '3.14'):
+            url = self.metadata_url(releases[1], py)
+            metadata = json.loads(self.downloads[url])
+            metadata['build'].update({
+                'native_dependencies': {'glib': {'build': '2.88.0', 'runtime': '2.88.0'}},
+                'build_tools': {'meson': '1.12.1', 'c_compiler': {'id': 'gcc', 'version': '15.2.0'}},
+            })
+            self.downloads[url] = json.dumps(metadata).encode()
+            environment_url = next(asset['browser_download_url'] for asset in releases[1]['assets']
+                                   if asset['name'] == f'py{py}-build-environment.json')
+            self.downloads[environment_url] = json.dumps(metadata['build']).encode()
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(len(self.generate(releases, Path(tmp) / 'site')), 2)
+
     def test_revisions_share_ubuntu_index_with_distinct_post_versions(self):
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "site"

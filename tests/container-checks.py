@@ -5,6 +5,7 @@ import ctypes
 import hashlib
 import json
 from pathlib import Path
+import platform
 import sys
 import sysconfig
 import zipfile
@@ -52,6 +53,18 @@ for symbol in ('gst_gl_display_x11_new_with_display', 'gst_gl_display_wayland_ne
 for library in ('libGL.so.1', 'libGLESv2.so.2', 'libEGL.so.1'):
     ctypes.CDLL(library)
 import cairo
+if 'native_dependencies' in environment:
+    native = environment['native_dependencies']
+    glib = ctypes.CDLL('libglib-2.0.so.0')
+    actual_glib = '.'.join(str(ctypes.c_uint.in_dll(glib, f'glib_{part}_version').value)
+                           for part in ('major', 'minor', 'micro'))
+    assert native['glib']['runtime'] == actual_glib
+    assert native['cairo']['runtime'] == cairo.cairo_version_string()
+    assert native['glibc']['runtime'] == platform.libc_ver()[1]
+    assert native['gobject']['build'] == native['glib']['build']
+    tools = environment['build_tools']
+    assert all(tools['c_compiler'][key] for key in ('id', 'version', 'full_version', 'exelist'))
+    assert tools['meson']
 surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, 2, 2)
 assert surface.get_width() == 2
 surface.finish()

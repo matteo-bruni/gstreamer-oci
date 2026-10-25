@@ -3,7 +3,7 @@ set -euo pipefail
 
 # 1. DEPENDENCY CHECK (Fail Fast)
 echo "Checking required tools..."
-for cmd in docker just jq gh git sha256sum; do
+for cmd in docker just jq gh git sha256sum python3; do
     if ! command -v "$cmd" &> /dev/null; then
         echo "Fatal error: Command '$cmd' is not installed or not in PATH." >&2
         exit 1

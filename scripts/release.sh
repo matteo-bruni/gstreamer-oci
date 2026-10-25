@@ -45,6 +45,19 @@ release_name=${CUSTOM_RELEASE_NAME:-GStreamer OCI $GSTREAMER_VERSION ($BASE_IMAG
 git check-ref-format "refs/tags/$release_tag"
 [[ "$release_name" != *$'\n'* ]] || { echo 'Release title must be a single line' >&2; exit 1; }
 
+check_release_revision() {
+    python3 scripts/check-release-revision.py \
+        "$repo" \
+        "$GSTREAMER_VERSION" \
+        "$BASE_IMAGE" \
+        "$BASE_TAG" \
+        "$GSTREAMER_BUILD_PROFILE" \
+        "$VARIANT" \
+        "$IMAGE_TARGET" \
+        "$BUILD_TYPE" \
+        "$RELEASE_REVISION"
+}
+
 if [[ "$DRY_RUN" == false ]]; then
     [[ -z "$(git status --porcelain)" ]] || { echo 'Commit or remove local changes before publishing' >&2; exit 1; }
     remote_commit="$(gh api "repos/$repo/commits/$commit" --jq .sha)"
@@ -64,6 +77,7 @@ if [[ "$DRY_RUN" == false ]]; then
         "refs/tags/$release_tag"; then
         echo "Tag already exists: $release_tag" >&2; exit 1
     fi
+    check_release_revision
 fi
 
 # A failed registry lookup must not be mistaken for permission to overwrite a tag.
@@ -214,6 +228,7 @@ fi
 }
 
 # Recheck all tags after the long builds, before pushing the first Python image.
+check_release_revision
 check_release_image_tags
 # Push every fixed tag before updating any moving alias.
 for py in "${versions[@]}"; do

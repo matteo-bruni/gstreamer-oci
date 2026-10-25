@@ -280,6 +280,15 @@ uv pip install --no-cache --python /tmp/my-venv/bin/python --no-index \
 /tmp/my-venv/bin/python -c 'import gi; gi.require_version("Gst", "1.0"); from gi.repository import Gst; Gst.init(None); print(Gst.version_string())'
 ```
 
+`/opt/wheel/build-environment.json` records the Python packages and native
+GStreamer source commit. New builds also record GLib/GObject and Cairo build
+versions, loaded GLib/Cairo/glibc versions, and the C compiler and Meson selected
+for the bindings. Release assets expose the same data in
+`py<version>-build-environment.json` and inside `py<version>-build-metadata.json`.
+An Ubuntu version identifies a distribution, not a frozen set of packages:
+its image tag and APT packages can receive updates between builds. Older
+release metadata may omit the additional native dependency fields.
+
 Use a wheel matching the CPython minor version and architecture. Wheels from
 different Ubuntu builds have the same Linux platform tag: keep them in separate
 directories or releases. They are not certified manylinux wheels. Using the
