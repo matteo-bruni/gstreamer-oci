@@ -290,16 +290,20 @@ or typelibs. In particular, do not assume a 26.04 wheel works on 24.04.
 ## Installing from the release wheel index
 
 The [wheel catalog](https://matteo-bruni.github.io/gstreamer-oci/) provides a
-separate Simple API index for each verified release and Ubuntu version. Python
-3.12/3.14 wheels can share an index; Ubuntu variants cannot. Select the index
-matching the native GStreamer installation. The index supplies the tested
+Simple API index for each Ubuntu version, containing all verified GStreamer
+versions and distribution revisions. Its homepage explains prerequisites,
+version selection and download origins, with pip/uv commands for both indexes.
+Python 3.12/3.14 wheels share an index. Image profiles and codec
+variants share the same wheel links only after their contents are verified
+equivalent; Ubuntu versions remain separate. Select your Ubuntu index and pin
+the binding to your native GStreamer version. The index supplies the tested
 PyGObject and pycairo binaries; typing-extensions links use the original PyPI
 wheel. GStreamer libraries and system typelibs must already be installed.
 
 For example, in an Ubuntu 24.04 environment matching this release:
 
 ```bash
-INDEX_URL="https://matteo-bruni.github.io/gstreamer-oci/releases/gst-python-binding-1.28.8-ubuntu-24.04-base-non-free/simple/"
+INDEX_URL="https://matteo-bruni.github.io/gstreamer-oci/ubuntu-24.04/simple/"
 python -m pip install \
     --only-binary=:all: \
     --index-url "$INDEX_URL" \
@@ -316,6 +320,18 @@ uv pip install \
 ```
 
 These are distribution-specific Linux wheels, not portable manylinux wheels.
+Revision 2 uses binding version `1.28.8.post2` in the same Ubuntu index.
+`gst-python-binding==1.28.8.*` allows revisions of 1.28.8 while excluding 1.28.9;
+pin an exact version and lock all dependencies for reproducible environments.
+pip and uv cannot detect which native GStreamer version is installed: an
+unconstrained install can select incompatible newer bindings.
+
+The previous `releases/<release-tag>/simple/`, `wheels/ubuntu-<version>/simple/`
+and `wheels/ubuntu-<version>/<gstreamer>[-rN]/simple/` paths have been removed;
+update existing index settings and lockfiles to the Ubuntu index. Wheel assets
+remain in their original GitHub Releases. OCI image tags retain their
+profile, variant, Python, target and build-type dimensions.
+
 External native installations may instead build PyGObject/pycairo from PyPI
 against their local libraries, subject to upstream minimum versions; that
 compatibility is not certified here.
