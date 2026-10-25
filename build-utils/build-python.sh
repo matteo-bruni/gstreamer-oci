@@ -5,6 +5,9 @@ PYGOBJECT_VERSION='3.58.1'
 PYCAIRO_VERSION='1.29.2'
 TYPING_EXTENSIONS_VERSION='4.15.0'
 
+RELEASE_REVISION=${RELEASE_REVISION:-1}
+[[ "$RELEASE_REVISION" =~ ^[1-9][0-9]*$ ]] || { echo 'Invalid release revision' >&2; exit 1; }
+
 # Measure this phase, including dependency wheels, bindings and packaging.
 start=$SECONDS
 mkdir -p /opt/wheel
@@ -94,6 +97,7 @@ mkdir -p "$package/src/gi/overrides"
 cp /tmp/build-utils/gst-python-binding/{pyproject.toml,hatch_build.py} "$package/"
 cp /opt/gstreamer/subprojects/gst-python/COPYING "$package/"
 version="$GSTREAMER_VERSION"
+[[ "${RELEASE_REVISION:-1}" == 1 ]] || version+=".post$RELEASE_REVISION"
 if [[ "$GSTREAMER_BUILD_TYPE" == debug ]]; then version+='+debug'; fi
 sed -i "s/version = \"0.0.0\"/version = \"$version\"/" "$package/pyproject.toml"
 cp /opt/gst-python-build/gi/overrides/_gi_gst*.so "$package/src/gi/overrides/"

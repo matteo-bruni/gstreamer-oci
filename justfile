@@ -15,7 +15,8 @@ image-tag \
     #!/usr/bin/env bash
     exec bash scripts/image-tag.sh "$@"
 
-# Build and load an image: VARIANT=free/non-free, IMAGE_TARGET=runtime/dev.
+# Build and load an image; RELEASE_REVISION defaults to 1 (no suffix), then r2/r3.
+# VARIANT=free/non-free, IMAGE_TARGET=runtime/dev.
 build \
     GSTREAMER_BUILD_TYPE \
     BASE_IMAGE \

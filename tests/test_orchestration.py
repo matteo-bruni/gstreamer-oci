@@ -94,7 +94,7 @@ class OrchestrationTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0, value)
             self.assertFalse(marker.exists())
 
-    def run_release(self, failure='', dry_run='false', cache_to='', profile='base'):
+    def run_release(self, failure='', dry_run='false', cache_to='', profile='base', revision='1', draft='false', prerelease='false', image_target='runtime', build_type='release'):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp)
             shutil.copytree(ROOT / 'scripts', path / 'scripts')
@@ -121,11 +121,20 @@ elif name == 'gh':
     elif args[0]=='api' and '/commits/' in args[1]:
         if os.environ.get('TEST_FAILURE')=='commit': sys.exit(1)
         print('a'*40)
+    elif args[:2]==['release','create'] and os.environ.get('TEST_FAILURE')=='draft': sys.exit(6)
+    elif args[:2]==['release','edit'] and os.environ.get('TEST_FAILURE')=='publish': sys.exit(7)
     elif args[:2]==['release','list'] and os.environ.get('TEST_FAILURE')=='release':
         print('gst-python-binding-1.28.8-ubuntu-26.04-base-non-free')
 elif name == 'docker':
     failure=os.environ.get('TEST_FAILURE','')
     if args[0]=='login': sys.stdin.read()
+    if args[:3]==['buildx','imagetools','inspect']:
+        if '--format' in args:
+            print('sha256:'+('d' if failure=='digest' and '-sha-' in args[-1] else 'b')*64)
+        elif failure=='registry-exists' or (failure=='registry-late' and pathlib.Path(os.environ['TEST_IMAGE']).exists()): print('existing image')
+        elif failure=='registry-error': print('ERROR: unauthorized', file=sys.stderr); sys.exit(1)
+        else: print('ERROR: '+args[-1]+': not found', file=sys.stderr); sys.exit(1)
+    if args[0]=='push' and '3.14' in args[1] and failure=='push': sys.exit(5)
     if args[:2]==['buildx','build'] and '3.14' in ' '.join(args) and failure=='build': sys.exit(3)
     if args[0]=='run' and '3.14' in ' '.join(args) and failure=='verify': sys.exit(4)
     if args[0]=='create':
@@ -133,7 +142,10 @@ elif name == 'docker':
     elif args[0]=='cp':
         dest=pathlib.Path(args[2]); image=pathlib.Path(os.environ['TEST_IMAGE']).read_text()
         py='314' if '3.14' in image else '312'
-        (dest/f'gst_python_binding-1.28.8-cp{py}-cp{py}-linux_x86_64.whl').write_text('binding')
+        version='1.28.8'
+        revision=os.environ['RELEASE_REVISION']
+        if revision!='1': version+='.post'+revision
+        (dest/f'gst_python_binding-{version}-cp{py}-cp{py}-linux_x86_64.whl').write_text('binding')
         (dest/'typing_extensions-4.15.0-py3-none-any.whl').write_text('shared dependency')
         (dest/'build-environment.json').write_text(json.dumps({'python':py}))
 '''
@@ -145,13 +157,16 @@ elif name == 'docker':
                 'TEST_LOG': str(path / 'commands.jsonl'), 'TEST_IMAGE': str(path / 'image'),
                 'TEST_FAILURE': failure, 'GSTREAMER_VERSION': '1.28.8', 'PYTHON_VERSIONS': '3.12 3.14',
                 'BASE_IMAGE': 'ubuntu', 'BASE_TAG': '26.04', 'GSTREAMER_BUILD_PROFILE': profile,
-                'VARIANT': 'non-free', 'IMAGE_TARGET': 'runtime',
+                'VARIANT': 'non-free', 'IMAGE_TARGET': image_target,
+                'RELEASE_REVISION': revision, 'DRAFT': draft, 'PRERELEASE': prerelease, 'BUILD_TYPE': build_type,
                 'DRY_RUN': dry_run, 'GITHUB_ACTIONS': 'false'}
             for key in ('GITHUB_SHA', 'GITHUB_REPOSITORY', 'CUSTOM_RELEASE_TAG', 'CUSTOM_RELEASE_NAME', 'BUILD_CACHE_FROM', 'BUILD_CACHE_TO'):
                 env.pop(key, None)
             env['BUILD_CACHE_TO'] = cache_to
             env['GITHUB_SHA'] = 'c' * 40
             result = subprocess.run(['bash', 'scripts/release.sh'], cwd=path, env=env, text=True, capture_output=True)
+            self.release_metadata = {f.name: json.loads(f.read_text())
+                for f in (path/'release-assets/upload').glob('*build-metadata.json')}
             commands = [json.loads(line) for line in (path/'commands.jsonl').read_text().splitlines()] if (path/'commands.jsonl').exists() else []
             return result, commands
 
@@ -208,6 +223,83 @@ exec bash "$1"
         self.assertEqual(release[release.index('--target') + 1], 'a'*40)
         dependencies = [a for a in release if a.endswith('typing_extensions-4.15.0-py3-none-any.whl')]
         self.assertEqual(len(dependencies), 1)
+        self.assertIn('--draft', release)
+        publish = next(i for i,c in enumerate(commands) if c[:3] == ['gh', 'release', 'edit'])
+        aliases = [i for i,c in enumerate(commands) if c[:2] == ['docker', 'push'] and c[2].endswith('-latest')]
+        fixed = [i for i,c in enumerate(commands) if c[:2] == ['docker', 'push'] and not c[2].endswith('-latest')]
+        self.assertLess(max(fixed), commands.index(release))
+        self.assertLess(commands.index(release), publish)
+        self.assertTrue(aliases)
+        self.assertGreater(min(aliases), publish)
+
+    def test_revision_tags_and_rejected_revisions(self):
+        args = ['release', 'ubuntu', '26.04', '1.28.8', 'base', 'non-free', 'runtime', '3.14']
+        for revision in ('1', '2', '3'):
+            result = subprocess.run(['bash', 'scripts/image-tag.sh', *args], cwd=ROOT,
+                env=os.environ | {'RELEASE_REVISION': revision}, text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            suffix = '' if revision == '1' else '-r' + revision
+            self.assertEqual(result.stdout.strip(), 'gstreamer:1.28.8-ubuntu.26.04-base-py-3.14-non-free' + suffix)
+        for revision in ('0', '-1', '01', 'r2', '2.0', '2; echo injected'):
+            result, commands = self.run_release(revision=revision)
+            self.assertNotEqual(result.returncode, 0, revision)
+            self.assertEqual(commands, [])
+
+    def test_revision_reaches_images_wheels_metadata_and_aliases(self):
+        result, commands = self.run_release(revision='2')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        builds = [c for c in commands if c[:3] == ['docker', 'buildx', 'build']]
+        self.assertEqual(len(builds), 2)
+        for build in builds:
+            self.assertIn('RELEASE_REVISION=2', build)
+            self.assertTrue(build[build.index('--tag') + 1].endswith('-r2'))
+            self.assertIn('SOURCE_REVISION=' + 'a' * 40, build)
+        release = next(c for c in commands if c[:3] == ['gh', 'release', 'create'])
+        self.assertTrue(release[3].endswith('-r2'))
+        self.assertTrue(any('1.28.8.post2-' in a for a in release if a.endswith('.whl')))
+        for metadata in self.release_metadata.values():
+            self.assertEqual(metadata['release_revision'], 2)
+            self.assertEqual(metadata['image_digest'], 'sha256:' + 'b' * 64)
+            self.assertTrue(metadata['image_ref'].endswith('@sha256:' + 'b' * 64))
+        pushes = [c[2] for c in commands if c[:2] == ['docker', 'push']]
+        self.assertEqual(len(pushes), 6)
+        self.assertFalse(any('-r2-latest' in tag for tag in pushes))
+        self.assertTrue(all(tag.endswith('-r2') or '-r2-sha-' in tag or tag.endswith('-non-free-latest') for tag in pushes))
+
+    def test_registry_collisions_and_lookup_errors_stop_before_build(self):
+        for failure in ('registry-exists', 'registry-error'):
+            result, commands = self.run_release(failure)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse(any(c[:3] == ['docker', 'buildx', 'build'] for c in commands))
+            self.assertFalse(any(c[:2] == ['docker', 'push'] for c in commands))
+
+    def test_late_registry_collision_and_github_failure_never_promote_aliases(self):
+        for failure in ('registry-late', 'draft', 'publish'):
+            result, commands = self.run_release(failure)
+            self.assertNotEqual(result.returncode, 0)
+            pushes = [c for c in commands if c[:2] == ['docker', 'push']]
+            self.assertFalse(any(c[2].endswith('-latest') for c in pushes))
+            if failure == 'registry-late':
+                self.assertEqual(pushes, [])
+
+    def test_push_failure_or_digest_mismatch_never_promotes_aliases(self):
+        for failure in ('push', 'digest'):
+            result, commands = self.run_release(failure)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse(any(c[:3] == ['gh', 'release', 'create'] for c in commands))
+            self.assertFalse(any(c[:2] == ['docker', 'push'] and c[2].endswith('-latest') for c in commands))
+
+    def test_only_published_stable_runtime_promotes_aliases(self):
+        for options in ({'draft': 'true'}, {'prerelease': 'true'}, {'image_target': 'dev'}, {'build_type': 'debug'}):
+            with self.subTest(options=options):
+                result, commands = self.run_release(**options)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertFalse(any(c[:2] == ['docker', 'push'] and c[2].endswith('-latest') for c in commands))
+                edits = [c for c in commands if c[:3] == ['gh', 'release', 'edit']]
+                if options.get('draft') == 'true':
+                    self.assertEqual(edits, [])
+                else:
+                    self.assertIn('--latest=false', edits[0])
 
     def test_dry_run_never_publishes(self):
         result, commands = self.run_release(dry_run='true', cache_to='type=registry,ref=example.invalid/cache')

@@ -25,6 +25,7 @@ if [[ "$DRY_RUN" == false && "$GSTREAMER_BUILD_PROFILE" != base ]]; then
     echo 'Only the base profile may be published; use just build for minimal/full or a dry run' >&2
     exit 1
 fi
+export RELEASE_REVISION
 check_gstreamer_tag
 repo=${GITHUB_REPOSITORY:-$(gh repo view \
     --json nameWithOwner \
@@ -38,8 +39,9 @@ suffix=''
 [[ "$BUILD_TYPE" == release ]] || suffix+="-$BUILD_TYPE"
 [[ "$IMAGE_TARGET" == runtime ]] || suffix+='-dev'
 [[ "$VARIANT" == free ]] || suffix+='-non-free'
+suffix+="$(revision_suffix)"
 release_tag=${CUSTOM_RELEASE_TAG:-gst-python-binding-$GSTREAMER_VERSION-$BASE_IMAGE-$BASE_TAG-$GSTREAMER_BUILD_PROFILE$suffix}
-release_name=${CUSTOM_RELEASE_NAME:-GStreamer Python binding $GSTREAMER_VERSION ($BASE_IMAGE:$BASE_TAG, $GSTREAMER_BUILD_PROFILE$suffix)}
+release_name=${CUSTOM_RELEASE_NAME:-GStreamer OCI $GSTREAMER_VERSION ($BASE_IMAGE:$BASE_TAG, $GSTREAMER_BUILD_PROFILE$suffix)}
 git check-ref-format "refs/tags/$release_tag"
 [[ "$release_name" != *$'\n'* ]] || { echo 'Release title must be a single line' >&2; exit 1; }
 
@@ -64,12 +66,56 @@ if [[ "$DRY_RUN" == false ]]; then
     fi
 fi
 
+# A failed registry lookup must not be mistaken for permission to overwrite a tag.
+require_missing_registry_tag() {
+    local ref="$1" output
+    if output="$(docker buildx imagetools inspect "$ref" 2>&1)"; then
+        echo "Image tag already exists: $ref" >&2
+        return 1
+    fi
+    if [[ "$output" != *"$ref: not found"* && "$output" != *"manifest unknown"* ]]; then
+        printf 'Cannot check image tag %s: %s\n' "$ref" "$output" >&2
+        return 1
+    fi
+}
+
+registry_digest() {
+    local digest
+    digest="$(docker buildx imagetools inspect \
+        --format '{{.Manifest.Digest}}' \
+        "$1")"
+    [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "Invalid registry digest: $digest" >&2; return 1; }
+    printf '%s\n' "$digest"
+}
+
+check_release_image_tags() {
+    local py local_tag tag
+    for py in "${versions[@]}"; do
+        validate_build_args "$BUILD_TYPE" "$BASE_IMAGE" "$BASE_TAG" "$GSTREAMER_VERSION" \
+            "$GSTREAMER_BUILD_PROFILE" "$VARIANT" "$IMAGE_TARGET" "$py"
+        local_tag="$(image_tag)"
+        tag="$image_repository:${local_tag#*:}"
+        require_missing_registry_tag "$tag"
+        require_missing_registry_tag "$tag-sha-$short_sha"
+    done
+}
+
+if [[ "$DRY_RUN" == false ]]; then
+    if [[ "${GITHUB_ACTIONS:-false}" != true ]]; then
+        gh auth token | docker login ghcr.io \
+            -u "$(gh api user --jq .login)" \
+            --password-stdin \
+            >/dev/null
+    fi
+    check_release_image_tags
+fi
+
 assets=release-assets
 rm -rf "$assets"
 mkdir -p "$assets/upload"
 notes="$assets/release-notes.md"
 {
-    printf 'GStreamer %s\n\n' "$GSTREAMER_VERSION"
+    printf 'GStreamer %s — distribution revision %s\n\n' "$GSTREAMER_VERSION" "$RELEASE_REVISION"
     printf -- '- Base: %s:%s\n- Profile: %s\n- Build type: %s\n- Image target: %s\n- Variant: %s\n- Commit: %s\n- Python: %s\n' \
         "$BASE_IMAGE" "$BASE_TAG" "$GSTREAMER_BUILD_PROFILE" "$BUILD_TYPE" "$IMAGE_TARGET" "$VARIANT" "$commit" "$PYTHON_VERSIONS"
     printf -- '- uv image version: %s\n- Compilation jobs: %s\n' "$UV_VERSION" "${BUILD_JOBS:-6}"
@@ -132,6 +178,7 @@ for py in "${versions[@]}"; do
         --arg variant "$VARIANT" \
         --arg image_target "$IMAGE_TARGET" \
         --arg build_type "$BUILD_TYPE" \
+        --argjson release_revision "$RELEASE_REVISION" \
         --arg repository "$repo" \
         --arg uv_version "$UV_VERSION" \
         --arg base_image "$BASE_IMAGE" \
@@ -142,7 +189,7 @@ for py in "${versions[@]}"; do
         --slurpfile environment "$python_assets/py$py-build-environment.json" \
         '{image_tag:$image_tag,image_tag_sha:$image_tag_sha,git_sha:$git_sha,git_short_sha:$git_short_sha,
           python_version:$python_version,release_tag:$release_tag,build_profile:$build_profile,
-          variant:$variant,image_target:$image_target,build_type:$build_type,repository:$repository,
+          variant:$variant,image_target:$image_target,build_type:$build_type,release_revision:$release_revision,repository:$repository,
           uv_version:$uv_version,base_image:$base_image,base_tag:$base_tag,
           requested_python_versions:($versions|split(" ")|map(select(length>0))),wheel_file:$wheel_file,build:$environment[0]}' \
         > "$python_assets/py$py-build-metadata.json"
@@ -166,34 +213,69 @@ fi
     exit 1
 }
 
-if [[ "${GITHUB_ACTIONS:-false}" != true ]]; then
-    gh auth token | docker login ghcr.io \
-        -u "$(gh api user --jq .login)" \
-        --password-stdin \
-        >/dev/null
-fi
+# Recheck all tags after the long builds, before pushing the first Python image.
+check_release_image_tags
+# Push every fixed tag before updating any moving alias.
 for py in "${versions[@]}"; do
-    local_tag="$(bash scripts/image-tag.sh \
-        "$BUILD_TYPE" \
-        "$BASE_IMAGE" \
-        "$BASE_TAG" \
-        "$GSTREAMER_VERSION" \
-        "$GSTREAMER_BUILD_PROFILE" \
-        "$VARIANT" \
-        "$IMAGE_TARGET" \
-        "$py")"
+    validate_build_args "$BUILD_TYPE" "$BASE_IMAGE" "$BASE_TAG" "$GSTREAMER_VERSION" \
+        "$GSTREAMER_BUILD_PROFILE" "$VARIANT" "$IMAGE_TARGET" "$py"
+    local_tag="$(image_tag)"
     image_tag="$image_repository:${local_tag#*:}"
     docker tag "$local_tag" "$image_tag"
     docker tag "$local_tag" "$image_tag-sha-$short_sha"
     docker push "$image_tag"
     docker push "$image_tag-sha-$short_sha"
+    digest="$(registry_digest "$image_tag")"
+    [[ "$(registry_digest "$image_tag-sha-$short_sha")" == "$digest" ]] || {
+        echo 'Image and source tag have different digests' >&2; exit 1
+    }
+    metadata="$assets/py$py/py$py-build-metadata.json"
+    jq \
+        --arg digest "$digest" \
+        --arg ref "$image_repository@$digest" \
+        '. + {image_digest:$digest,image_ref:$ref}' \
+        "$metadata" > "$metadata.tmp"
+    mv "$metadata.tmp" "$metadata"
+    cp "$metadata" "$assets/upload/"
+    printf '\nPython %s digest: `%s@%s`\n' "$py" "$image_repository" "$digest" >> "$notes"
 done
 flags=(
     --repo "$repo"
     --target "$commit"
     --title "$release_name"
     --notes-file "$notes"
+    --draft
+    --latest=false
 )
 [[ "$PRERELEASE" == false ]] || flags+=(--prerelease)
-[[ "$DRAFT" == false ]] || flags+=(--draft)
 gh release create "$release_tag" "${flags[@]}" "$assets/upload/"*
+if [[ "$DRAFT" == true ]]; then
+    echo "Draft prepared: $release_tag; moving aliases were not updated"
+    exit 0
+fi
+latest=false
+if [[ "$BUILD_TYPE" == release && "$IMAGE_TARGET" == runtime && "$PRERELEASE" == false ]]; then
+    latest=true
+fi
+gh release edit "$release_tag" \
+    --repo "$repo" \
+    --draft=false \
+    --latest="$latest"
+if [[ "$latest" == true ]]; then
+    # The clean first-build tag stays fixed; only the explicit -latest alias moves.
+    # shortcut: GHCR/GitHub cannot commit all updates atomically; recover interrupted pushes manually.
+    for py in "${versions[@]}"; do
+        validate_build_args "$BUILD_TYPE" "$BASE_IMAGE" "$BASE_TAG" "$GSTREAMER_VERSION" \
+            "$GSTREAMER_BUILD_PROFILE" "$VARIANT" "$IMAGE_TARGET" "$py"
+        local_tag="$(image_tag)"
+        alias="$(image_alias_tag)"
+        alias="$image_repository:${alias#*:}"
+        docker tag "$local_tag" "$alias"
+        docker push "$alias"
+        metadata="$assets/py$py/py$py-build-metadata.json"
+        digest="$(jq -r .image_digest "$metadata")"
+        [[ "$(registry_digest "$alias")" == "$digest" ]] || {
+            echo "Alias digest mismatch: $alias" >&2; exit 1
+        }
+    done
+fi

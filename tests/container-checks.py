@@ -9,8 +9,15 @@ import sys
 import sysconfig
 import zipfile
 
-profile = json.loads(Path('/opt/wheel/build-environment.json').read_text())['profile']
-expected = importlib.metadata.version('gst-python-binding').split('+')[0]
+environment = json.loads(Path('/opt/wheel/build-environment.json').read_text())
+profile = environment['profile']
+expected = environment['gstreamer_version']
+binding_version = expected
+if environment.get('release_revision', 1) != 1:
+    binding_version += f'.post{environment["release_revision"]}'
+if environment['build_type'] == 'debug':
+    binding_version += '+debug'
+assert importlib.metadata.version('gst-python-binding') == binding_version
 has_analytics_extension = tuple(map(int, expected.split('.'))) >= (1, 28, 8)
 import gi
 for namespace in ('Gst', 'GstBase', 'GstVideo', 'GstApp', 'GstAudio', 'GstAnalytics', 'GES'):

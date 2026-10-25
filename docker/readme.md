@@ -27,6 +27,10 @@ docker buildx build --load --platform linux/amd64 \
   --build-arg VARIANT=non-free \
   --build-arg PYTHON_VERSION=3.14 \
   --build-arg UV_VERSION=0.13.5 \
+  --build-arg RELEASE_REVISION=1 \
+  --build-arg IMAGE_VERSION=1.28.8-ubuntu.26.04-base-py-3.14-non-free \
+  --build-arg SOURCE_REVISION="$(git rev-parse HEAD)" \
+  --build-arg BUILD_CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   --tag gstreamer:1.28.8-ubuntu.26.04-base-py-3.14-non-free .
 ```
 

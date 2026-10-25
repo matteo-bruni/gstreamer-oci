@@ -8,6 +8,11 @@ on:
         required: true
         default: "1.28.8"
         type: string
+      release_revision:
+        description: Distribution revision (1 has no suffix; 2 produces -r2)
+        required: true
+        default: "1"
+        type: string
       python_versions:
         description: Space-separated list of Python versions, for example "3.12 3.14"
         required: true
@@ -89,7 +94,8 @@ permissions:
   packages: write
 
 concurrency:
-  group: manual-release-${{ inputs.release_tag != '' && inputs.release_tag || format('gst-python-binding-{0}-{1}-{2}-{3}{4}{5}{6}', inputs.gstreamer_version, inputs.base_image, inputs.base_tag, 'base', inputs.build_type != 'release' && format('-{0}', inputs.build_type) || '', inputs.image_target == 'dev' && '-dev' || '', inputs.variant == 'non-free' && '-non-free' || '') }}
+  # Serialize revisions sharing the same aliases, including custom Git tags.
+  group: manual-release-${{ inputs.gstreamer_version }}-${{ inputs.base_image }}-${{ inputs.base_tag }}-${{ inputs.variant }}-${{ inputs.image_target }}-${{ inputs.build_type }}
   cancel-in-progress: false
 
 jobs:
@@ -100,6 +106,7 @@ jobs:
     environment: ${{ inputs.environment_name }}
     env:
       GSTREAMER_VERSION: ${{ inputs.gstreamer_version }}
+      RELEASE_REVISION: ${{ inputs.release_revision }}
       PYTHON_VERSIONS: ${{ inputs.python_versions }}
       BASE_IMAGE: ${{ inputs.base_image }}
       BASE_TAG: ${{ inputs.base_tag }}

@@ -9,6 +9,7 @@ uv_version="$9"
 [[ "$uv_version" =~ ^([0-9]+\.[0-9]+\.[0-9]+|latest)$ ]] || { echo 'Invalid uv version' >&2; exit 1; }
 [[ "${BUILD_JOBS:-6}" =~ ^[1-9][0-9]*$ ]] || { echo 'BUILD_JOBS must be positive' >&2; exit 1; }
 check_gstreamer_tag
+local_tag="$(image_tag)"
 
 target=final
 [[ "$IMAGE_TARGET" == runtime ]] || target=gstreamer_builder
@@ -23,8 +24,12 @@ args=(
     --build-arg "GSTREAMER_BUILD_PROFILE=$GSTREAMER_BUILD_PROFILE"
     --build-arg "VARIANT=$VARIANT"
     --build-arg "BUILD_JOBS=${BUILD_JOBS:-6}"
+    --build-arg "RELEASE_REVISION=$RELEASE_REVISION"
+    --build-arg "IMAGE_VERSION=${local_tag#*:}"
+    --build-arg "SOURCE_REVISION=$(git rev-parse HEAD)"
+    --build-arg "BUILD_CREATED=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     --progress "${BUILD_PROGRESS:-auto}"
-    --tag "$(image_tag)"
+    --tag "$local_tag"
     --target "$target"
 )
 [[ -z "${BUILD_CACHE_FROM:-}" ]] || args+=(--cache-from "$BUILD_CACHE_FROM")

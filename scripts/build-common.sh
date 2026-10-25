@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 
 validate_build_args() {
+    RELEASE_REVISION=${RELEASE_REVISION:-1}
+    [[ "$RELEASE_REVISION" =~ ^[1-9][0-9]*$ ]] || { echo 'RELEASE_REVISION must be a positive integer without leading zeros' >&2; return 1; }
     [[ $# == 8 ]] || { echo 'Expected 8 build options' >&2; return 1; }
     GSTREAMER_BUILD_TYPE="$1" BASE_IMAGE="$2" BASE_TAG="$3" GSTREAMER_VERSION="$4"
     GSTREAMER_BUILD_PROFILE="$5" VARIANT="$6" IMAGE_TARGET="$7" PYTHON_VERSION="$8"
@@ -27,7 +29,18 @@ image_tag() {
     [[ "$GSTREAMER_BUILD_TYPE" == release ]] || suffix+="-$GSTREAMER_BUILD_TYPE"
     [[ "$IMAGE_TARGET" == runtime ]] || suffix+='-dev'
     [[ "$VARIANT" == free ]] || suffix+='-non-free'
+    suffix+="$(revision_suffix)"
     printf 'gstreamer:%s-%s.%s-%s-py-%s%s\n' "$GSTREAMER_VERSION" "$BASE_IMAGE" "$BASE_TAG" "$GSTREAMER_BUILD_PROFILE" "$PYTHON_VERSION" "$suffix"
+}
+
+revision_suffix() {
+    [[ "$RELEASE_REVISION" == 1 ]] || printf '%s' "-r$RELEASE_REVISION"
+    return 0
+}
+
+image_alias_tag() {
+    local RELEASE_REVISION=1
+    printf '%s-latest\n' "$(image_tag)"
 }
 
 check_gstreamer_tag() {

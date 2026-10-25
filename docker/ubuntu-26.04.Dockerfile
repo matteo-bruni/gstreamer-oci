@@ -247,11 +247,24 @@ ENV PKG_CONFIG_PATH=${VIRTUAL_ENV}/lib/pkgconfig:${UV_TOOLCHAIN_DIR}/lib/pkgconf
 # gst-python-binding avoids the gst-python package name; a separate packaging
 # directory keeps generated wheel files out of the upstream source tree.
 # Binding/metadata edits invalidate this step without recompiling native GStreamer.
+# Revisions change wheel identity while preserving the native GStreamer version.
+ARG RELEASE_REVISION=1
+ENV RELEASE_REVISION=${RELEASE_REVISION}
 RUN --mount=type=bind,src=build-utils,target=/tmp/build-utils \
     --mount=type=cache,id=gst-uv,target=/root/.cache/uv \
     bash /tmp/build-utils/build-python.sh
 # Cache mounts are not exported; keep the native Cargo target symlink usable in SDKs.
 RUN mkdir -p "$CARGO_TARGET_DIR"
+# Publication metadata stays last so timestamps/commits do not invalidate compilation.
+ARG IMAGE_VERSION=unversioned
+ARG SOURCE_REVISION=unknown
+ARG BUILD_CREATED
+LABEL description="GStreamer with Python bindings, an offline wheelhouse, and runtime/dev targets." \
+    org.opencontainers.image.description="GStreamer with Python bindings, an offline wheelhouse, and runtime/dev targets." \
+    org.opencontainers.image.title="GStreamer OCI" \
+    org.opencontainers.image.version="${IMAGE_VERSION}" \
+    org.opencontainers.image.revision="${SOURCE_REVISION}" \
+    org.opencontainers.image.created="${BUILD_CREATED}"
 
 # 6. RUNTIME IMAGE (default output; no compiler toolchain or source tree)
 FROM os_base AS final
@@ -503,3 +516,13 @@ RUN uv pip install \
         --find-links=/opt/wheel \
         gst-python-binding && \
     ldconfig
+# Publication metadata stays last so timestamps/commits do not invalidate compilation.
+ARG IMAGE_VERSION=unversioned
+ARG SOURCE_REVISION=unknown
+ARG BUILD_CREATED
+LABEL description="GStreamer with Python bindings, an offline wheelhouse, and runtime/dev targets." \
+    org.opencontainers.image.description="GStreamer with Python bindings, an offline wheelhouse, and runtime/dev targets." \
+    org.opencontainers.image.title="GStreamer OCI" \
+    org.opencontainers.image.version="${IMAGE_VERSION}" \
+    org.opencontainers.image.revision="${SOURCE_REVISION}" \
+    org.opencontainers.image.created="${BUILD_CREATED}"

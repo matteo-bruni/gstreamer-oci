@@ -13,6 +13,7 @@ print(json.dumps({
     "profile": os.environ["GSTREAMER_BUILD_PROFILE"],
     "variant": os.environ["VARIANT"],
     "build_type": os.environ["GSTREAMER_BUILD_TYPE"],
+    "release_revision": int(os.environ.get("RELEASE_REVISION", "1")),
     "requirements": {name: importlib.metadata.version(name) for name in
                      ("gst-python-binding", "PyGObject", "pycairo", "typing-extensions")},
 }, indent=2))

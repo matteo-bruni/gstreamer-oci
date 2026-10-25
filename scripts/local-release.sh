@@ -72,6 +72,7 @@ validate_choice() {
 }
 
 prompt_for "GStreamer version" "1.28.8" GSTREAMER_VERSION
+prompt_for "Release revision (1 = no suffix, 2 = r2, ...)" "${RELEASE_REVISION:-1}" RELEASE_REVISION
 prompt_for "Python versions (space-separated)" "3.12" PYTHON_VERSIONS
 prompt_for "Base image" "ubuntu" BASE_IMAGE
 prompt_for "Base tag" "24.04" BASE_TAG
@@ -98,5 +99,5 @@ if [[ "$DRY_RUN" == false ]]; then
 fi
 
 export GSTREAMER_VERSION PYTHON_VERSIONS BASE_IMAGE BASE_TAG GSTREAMER_BUILD_PROFILE
-export VARIANT IMAGE_TARGET BUILD_TYPE UV_VERSION DRY_RUN PRERELEASE DRAFT
+export VARIANT IMAGE_TARGET BUILD_TYPE UV_VERSION DRY_RUN PRERELEASE DRAFT RELEASE_REVISION
 exec bash "$(dirname "$0")/release.sh"
